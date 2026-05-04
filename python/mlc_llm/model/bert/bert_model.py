@@ -4,9 +4,9 @@ Implementation for BERT architecture.
 
 import dataclasses
 from functools import partial
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional  # noqa: UP035
 
-from tvm import te, tir
+from tvm import te, tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
-class BertConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
+class BertConfig(ConfigBase):
     """Configuration of the BERT model."""
 
     vocab_size: int
@@ -37,7 +37,7 @@ class BertConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
     position_offset: int = 0
     head_dim: int = 0
     max_batch_size: int = 1
-    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)  # noqa: UP006
 
     def __post_init__(self):
         if self.intermediate_size is None or self.intermediate_size == -1:
@@ -81,10 +81,7 @@ class BertConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
             self.prefill_chunk_size = self.context_window_size
 
 
-# pylint: disable=invalid-name,missing-docstring,too-many-locals
-
-
-class BertSelfAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
+class BertSelfAttention(nn.Module):
     def __init__(self, config: BertConfig):
         if config.num_attention_heads % config.tensor_parallel_shards != 0:
             raise ValueError(
@@ -222,7 +219,7 @@ class BertModel(nn.Module):
             self.dtype = dtype
 
     def forward(self, inputs: Tensor, attention_mask: Tensor):
-        # TODO: XLM-RoBERTa models use position indices starting from pad_token_id + 1  # pylint: disable=fixme
+        # TODO: XLM-RoBERTa models use position indices starting from pad_token_id + 1
         # (e.g., [2, 3, 4, ...] when pad_token_id=1), while this implementation uses
         # [0, 1, 2, ...]. For XLM-RoBERTa models (e.g., bge-m3), the position_embeddings
         # weights need to be shifted during weight conversion to compensate.
@@ -246,10 +243,10 @@ class BertModel(nn.Module):
         def _attention_mask(mask: te.Tensor, zero, batch_size, seq_len):
             return te.compute(
                 (batch_size, 1, seq_len, seq_len),
-                lambda b, _, i, j: tir.if_then_else(
-                    tir.any(mask[b, i] == zero, mask[b, j] == zero),
-                    tir.min_value(self.dtype),
-                    tir.max_value(self.dtype),
+                lambda b, _, i, j: tirx.if_then_else(
+                    tirx.any(mask[b, i] == zero, mask[b, j] == zero),
+                    tirx.min_value(self.dtype),
+                    tirx.max_value(self.dtype),
                 ),
                 name="attention_mask_prefill",
             )
@@ -258,7 +255,7 @@ class BertModel(nn.Module):
         attention_mask_2d = op.tensor_expr_op(
             _attention_mask,
             name_hint="attention_mask_prefill",
-            args=[attention_mask, tir.IntImm("int32", 0), batch_size, seq_len],
+            args=[attention_mask, tirx.IntImm("int32", 0), batch_size, seq_len],
         )
         return self.forward(inputs, attention_mask_2d)
 

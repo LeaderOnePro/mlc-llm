@@ -1,10 +1,10 @@
 """The FasterTransformer quantization config"""
 
 from dataclasses import dataclass
-from typing import Any, Callable, List, Literal, Optional, Tuple
+from typing import Any, Callable, List, Literal, Optional, Tuple  # noqa: UP035
 
 import tvm
-from tvm import DataType, DataTypeCode, IRModule, relax, te, tir
+from tvm import DataType, DataTypeCode, IRModule, relax, te, tirx
 from tvm.relax.frontend import nn
 from tvm.runtime import Tensor
 from tvm.s_tir import dlight as dl
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class FTQuantize:  # pylint: disable=too-many-instance-attributes
+class FTQuantize:
     """Configuration for FasterTransformer quantization"""
 
     name: str
@@ -129,7 +129,6 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
                         f"{name}.q_scale",
                     ]
                     if (
-                        # pylint: disable=too-many-boolean-expressions
                         is_final_fc(name)
                         or node.out_dtype == "float32"
                         or (self.config.quantize_dtype == "int4" and node.out_features % 8 != 0)
@@ -168,7 +167,7 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
         model = mutator.visit(name_prefix, model)
         return model
 
-    def quantize_weight(self, weight: Tensor) -> List[Tensor]:
+    def quantize_weight(self, weight: Tensor) -> List[Tensor]:  # noqa: UP006
         """
         Quantize weight with FasterTransformer quantization
 
@@ -190,9 +189,7 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
         )
         assert len(weight.shape) == 2
         device = weight.device
-        device_type = device._DEVICE_TYPE_TO_NAME[  # pylint: disable=protected-access
-            device.dlpack_device_type()
-        ]
+        device_type = device._DEVICE_TYPE_TO_NAME[device.dlpack_device_type()]
         if device_type == "cuda":
             target = Target.current()
             if target is None:
@@ -200,15 +197,13 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
             with target:
 
                 def _create_quantize_func() -> IRModule:
-                    bb = relax.BlockBuilder()  # pylint: disable=invalid-name
+                    bb = relax.BlockBuilder()
                     weight_var = relax.Var(
                         "weight", relax.TensorStructInfo(weight.shape, weight.dtype)
                     )
                     with bb.function(name="main", params=[weight_var]):
                         with bb.dataflow():
-                            lv0 = bb.emit_te(
-                                self._quantize, weight_var
-                            )  # pylint: disable=invalid-name
+                            lv0 = bb.emit_te(self._quantize, weight_var)
                             lv1 = bb.normalize(lv0[0])
                             lv2 = bb.emit(
                                 relax.call_pure_packed(
@@ -219,20 +214,18 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
                                     sinfo_args=lv1.struct_info,
                                 )
                             )
-                            gv = bb.emit_output(
-                                relax.Tuple([lv2, lv0[1]])
-                            )  # pylint: disable=invalid-name
+                            gv = bb.emit_output(relax.Tuple([lv2, lv0[1]]))
                         bb.emit_func_output(gv)
                     return bb.finalize()
 
                 def _compile_quantize_func(mod: IRModule) -> Callable:
-                    mod = dl.ApplyDefaultSchedule(  # type: ignore   # pylint: disable=not-callable
+                    mod = dl.ApplyDefaultSchedule(
                         dl.gpu.Reduction(),
                         dl.gpu.GeneralReduction(),
                         dl.gpu.Fallback(),
                     )(mod)
                     ex = relax.build(mod, target=target)
-                    vm = relax.VirtualMachine(ex, device)  # pylint: disable=invalid-name
+                    vm = relax.VirtualMachine(ex, device)
                     return vm["main"]
 
                 key = str(
@@ -253,22 +246,22 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
         else:
             raise NotImplementedError(f"Device type {device_type} is not supported")
 
-    def _quantize(  # pylint: disable=too-many-locals
+    def _quantize(
         self,
         weight: te.Tensor,
-    ) -> Tuple[te.Tensor, te.Tensor]:
+    ) -> Tuple[te.Tensor, te.Tensor]:  # noqa: UP006
         """FasterTransformer quantization for weight tensor, defined in tensor expression."""
         assert len(weight.shape) == 2
         n, k = weight.shape
 
         cur_group_size = k if not self.group_size else self.group_size
-        scale_shape = (tir.ceildiv(k, cur_group_size), n)
+        scale_shape = (tirx.ceildiv(k, cur_group_size), n)
         r = te.reduce_axis((0, cur_group_size), name="r")
 
         max_abs = te.compute(
             shape=scale_shape,
             fcompute=lambda j, i: te.max(
-                tir.if_then_else(
+                tirx.if_then_else(
                     j * cur_group_size + r < k,
                     te.abs(weight[i, j * cur_group_size + r]),
                     te.min_value(self.model_dtype),
@@ -277,7 +270,7 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
             ),
             name="max_abs_value",
         )
-        max_int = tir.const(self.max_int_value, self.model_dtype)
+        max_int = tirx.const(self.max_int_value, self.model_dtype)
         scale = te.compute(
             scale_shape,
             lambda i, j: max_abs[i, j].astype(self.model_dtype) / max_int,
@@ -285,13 +278,13 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
         )
         # compute scaled weight
         quantize_dtype = DataType(self.quantize_dtype)
-        bin_mask = tir.const((1 << quantize_dtype.bits) - 1, self.storage_dtype)
+        bin_mask = tirx.const((1 << quantize_dtype.bits) - 1, self.storage_dtype)
         scaled_weight = te.compute(
             shape=weight.shape,
             fcompute=lambda i, j: (
-                tir.min(
-                    tir.max(
-                        tir.round(weight[i, j] / scale[j // cur_group_size, i]),
+                tirx.min(
+                    tirx.max(
+                        tirx.round(weight[i, j] / scale[j // cur_group_size, i]),
                         -max_int - 1,
                     ),
                     max_int,
@@ -300,19 +293,19 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
             ),
         )
 
-        quantized_weight_shape = (k, tir.ceildiv(n, self.num_elem_per_storage))
-        r = te.reduce_axis((0, self.num_elem_per_storage), name="r")  # pylint: disable=invalid-name
+        quantized_weight_shape = (k, tirx.ceildiv(n, self.num_elem_per_storage))
+        r = te.reduce_axis((0, self.num_elem_per_storage), name="r")
         quantized_weight = te.compute(
             shape=quantized_weight_shape,
-            fcompute=lambda j, i: tir.sum(
-                tir.if_then_else(
+            fcompute=lambda j, i: tirx.sum(
+                tirx.if_then_else(
                     i * self.num_elem_per_storage + r < n,
                     scaled_weight[i * self.num_elem_per_storage + r, j]
                     << (
                         r.astype(self.storage_dtype)
-                        * tir.const(quantize_dtype.bits, self.storage_dtype)
+                        * tirx.const(quantize_dtype.bits, self.storage_dtype)
                     ),
-                    tir.const(0, self.storage_dtype),
+                    tirx.const(0, self.storage_dtype),
                 ),
                 axis=r,
             ),
@@ -322,10 +315,10 @@ class FTQuantize:  # pylint: disable=too-many-instance-attributes
         return quantized_weight, scale
 
 
-class FTQuantizeLinear(nn.Module):  # pylint: disable=too-many-instance-attributes
+class FTQuantizeLinear(nn.Module):
     """An nn.Linear module with FasterTransformer quantization"""
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
         in_features: int,
         out_features: int,
@@ -340,11 +333,11 @@ class FTQuantizeLinear(nn.Module):  # pylint: disable=too-many-instance-attribut
         self.config = config
         cur_group_size = in_features if not config.group_size else config.group_size
         self.q_weight = nn.Parameter(
-            (in_features, tir.ceildiv(out_features, config.num_elem_per_storage)),
+            (in_features, tirx.ceildiv(out_features, config.num_elem_per_storage)),
             config.storage_dtype,
         )
         self.q_scale = nn.Parameter(
-            (tir.ceildiv(in_features, cur_group_size), out_features), config.model_dtype
+            (tirx.ceildiv(in_features, cur_group_size), out_features), config.model_dtype
         )
         if bias:
             self.bias = nn.Parameter(
@@ -382,7 +375,7 @@ class FTQuantizeLinear(nn.Module):  # pylint: disable=too-many-instance-attribut
             quantized_linear.bias.attrs = src.bias.attrs
         return quantized_linear
 
-    def forward(self, x: nn.Tensor) -> nn.Tensor:  # pylint: disable=invalid-name
+    def forward(self, x: nn.Tensor) -> nn.Tensor:
         """
         Forward method for FasterTransformer quantized linear layer.
 
@@ -410,4 +403,4 @@ class FTQuantizeLinear(nn.Module):  # pylint: disable=too-many-instance-attribut
         if self.bias is not None and self.out_dtype is None:
             self.bias.to(dtype=dtype)
         if dtype is not None and isinstance(getattr(self, "dtype", None), str):
-            self.dtype = dtype  # pylint: disable=attribute-defined-outside-init
+            self.dtype = dtype

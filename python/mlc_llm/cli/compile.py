@@ -7,7 +7,7 @@ from functools import partial
 from pathlib import Path
 from typing import Union
 
-from mlc_llm.interface.compile import (  # pylint: disable=redefined-builtin
+from mlc_llm.interface.compile import (
     ModelConfigOverride,
     OptimizationFlags,
     compile,
@@ -70,7 +70,7 @@ def main(argv):
         "--model-type",
         type=str,
         default="auto",
-        choices=["auto"] + list(MODELS.keys()),
+        choices=["auto", *list(MODELS.keys())],
         help=HELP["model_type"] + ' (default: "%(default)s")',
     )
     parser.add_argument(
@@ -84,6 +84,11 @@ def main(argv):
         type=str,
         default="auto",
         help=HELP["host"] + ' (default: "%(default)s")',
+    )
+    parser.add_argument(
+        "--enable-subgroups",
+        action="store_true",
+        help=HELP["enable_subgroups"],
     )
     parser.add_argument(
         "--opt",
@@ -117,7 +122,11 @@ def main(argv):
         help=HELP["debug_dump"] + " (default: %(default)s)",
     )
     parsed = parser.parse_args(argv)
-    target, build_func = detect_target_and_host(parsed.device, parsed.host)
+    target, build_func = detect_target_and_host(
+        parsed.device,
+        parsed.host,
+        enable_subgroups=parsed.enable_subgroups,
+    )
     parsed.model_type = detect_model_type(parsed.model_type, parsed.model)
     parsed.quantization = detect_quantization(parsed.quantization, parsed.model)
     parsed.system_lib_prefix = detect_system_lib_prefix(
@@ -126,7 +135,7 @@ def main(argv):
         parsed.model_type.name,
         parsed.quantization.name,
     )
-    with open(parsed.model, "r", encoding="utf-8") as config_file:
+    with open(parsed.model, encoding="utf-8") as config_file:
         config = json.load(config_file)
 
     compile(

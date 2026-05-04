@@ -3,13 +3,14 @@ Implementation for CHATGLM3 architecture.
 """
 
 import dataclasses
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional  # noqa: UP035
 
-from tvm import te, tir
+from tvm import tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 
 from mlc_llm import op as op_ext
+from mlc_llm.model.model_utils import index_last_token
 from mlc_llm.nn import PagedKVCache, RopeMode
 from mlc_llm.support import logging
 from mlc_llm.support import tensor_parallel as tp
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
-class GLMConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
+class GLMConfig(ConfigBase):
     """Configuration of the ChatGLM model."""
 
     hidden_size: int
@@ -42,7 +43,7 @@ class GLMConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
     tensor_parallel_shards: int = 1
     head_dim: int = 0
     max_batch_size: int = 1
-    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)  # noqa: UP006
 
     def __post_init__(self):
         if self.vocab_size == 0:
@@ -86,10 +87,7 @@ class GLMConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
             self.prefill_chunk_size = min(self.context_window_size, 8192)
 
 
-# pylint: disable=invalid-name,missing-docstring
-
-
-class GLMAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
+class GLMAttention(nn.Module):
     def __init__(self, config: GLMConfig):
         self.hidden_size = config.hidden_size
         if config.num_attention_heads % config.tensor_parallel_shards != 0:
@@ -276,7 +274,7 @@ class ChatGLMModel(nn.Module):
         return hidden_states
 
 
-class ChatGLMForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attributes
+class ChatGLMForCausalLM(nn.Module):
     def __init__(self, config: GLMConfig):
         self.transformer = ChatGLMModel(config)
         self.num_hidden_layers = config.num_layers
@@ -322,12 +320,8 @@ class ChatGLMForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attrib
     def prefill(self, input_embed: Tensor, paged_kv_cache: PagedKVCache):
         op_ext.configure()
 
-        def _index(x: te.Tensor):  # x[:-1,:]
-            b, s, d = x.shape
-            return te.compute((b, 1, d), lambda i, _, k: x[i, s - 1, k], name="index")
-
         hidden_states = self.transformer(input_embed, paged_kv_cache)
-        hidden_states = op.tensor_expr_op(_index, name_hint="index", args=[hidden_states])
+        hidden_states = index_last_token(hidden_states)
         logits = self.transformer.output_layer(hidden_states)
         if logits.dtype != "float32":
             logits = logits.astype("float32")
@@ -361,13 +355,13 @@ class ChatGLMForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attrib
         logits = self.batch_forward(input_embeds, paged_kv_cache)
         return logits, paged_kv_cache
 
-    def create_paged_kv_cache(  # pylint: disable=too-many-arguments
+    def create_paged_kv_cache(
         self,
-        max_batch_size: tir.Var,
-        max_total_seq_len: tir.Var,
-        prefill_chunk_size: tir.Var,
-        page_size: tir.Var,
-        support_sliding_window: tir.Var,
+        max_batch_size: tirx.Var,
+        max_total_seq_len: tirx.Var,
+        prefill_chunk_size: tirx.Var,
+        page_size: tirx.Var,
+        support_sliding_window: tirx.Var,
     ) -> PagedKVCache:
         return PagedKVCache.create_generic(
             attn_kind="mha",

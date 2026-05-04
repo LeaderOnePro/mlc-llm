@@ -1,12 +1,14 @@
 """Implementation for RWKV6 architecture."""
 
 import dataclasses
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple  # noqa: UP035
 
-from tvm import te, tir
+import numpy as np
+from tvm import relax as R
+from tvm import te, tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Object, Tensor, op
-from tvm.script import tir as T
+from tvm.script import tirx as T
 
 from mlc_llm.nn.rnn_state import RNNState
 from mlc_llm.support import logging
@@ -25,7 +27,7 @@ class StateID:
 
 
 @dataclasses.dataclass
-class RWKV6Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
+class RWKV6Config(ConfigBase):
     """Configuration of the RWKV6 model."""
 
     hidden_size: int
@@ -41,12 +43,12 @@ class RWKV6Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
     prefill_chunk_size: int = 4096
     num_heads: int = 0
     max_batch_size: int = 1
-    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)  # noqa: UP006
 
     def __post_init__(self):
         if self.model_version != "6_0":
             raise ValueError(f"Only support RWKV v6_0, got {self.model_version}.")
-        self.intermediate_size = self.intermediate_size or int((self.hidden_size * 3.5)) // 32 * 32
+        self.intermediate_size = self.intermediate_size or int(self.hidden_size * 3.5) // 32 * 32
         self.num_heads = (
             self.hidden_size // self.head_size if self.num_heads == 0 else self.num_heads
         )
@@ -59,8 +61,6 @@ class RWKV6Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
             raise ValueError("Only support single device at this moment.")
 
 
-# pylint: disable=invalid-name, missing-docstring
-# pylint: disable=too-many-arguments, too-many-locals, redefined-argument-from-local
 def create_wkv6_func(
     num_heads: int,
     head_size: int,
@@ -79,7 +79,7 @@ def create_wkv6_func(
         out: T.handle,
         out_state: T.handle,
     ):
-        T.func_attr({"op_pattern": 8, "tir.noalias": True, "tir.is_scheduled": 1})
+        T.func_attr({"op_pattern": 8, "tirx.noalias": True, "tirx.is_scheduled": 1})
         batch_size, seq_len = T.int64(), T.int64()
         # Inputs
         r_buf = T.match_buffer(r, (batch_size, seq_len, num_heads, head_size), dtype=dtype)
@@ -130,7 +130,7 @@ def token_shift(state: Tensor, x: Tensor):
     def _te_token_shift(state: te.Tensor, x: te.Tensor):
         return te.compute(
             x.shape,
-            lambda b, i, j: tir.if_then_else(i == 0, state[b, j], x[b, i - 1, j]),
+            lambda b, i, j: tirx.if_then_else(i == 0, state[b, j], x[b, i - 1, j]),
         )
 
     return op.tensor_expr_op(_te_token_shift, "token_shift", [state, x])
@@ -145,11 +145,11 @@ def last_token(x: Tensor):
     return x if seq_len == 1 else op.tensor_expr_op(_te_last_token, "last_token", [x])
 
 
-def unbind_to_five(x: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+def unbind_to_five(x: Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:  # noqa: UP006
     assert x.shape[0] == 5
 
     def _te_get_ith(x: te.Tensor, i: int):
-        return te.compute((1, *x.shape[1:]), lambda _, j, k, l: x[i, j, k, l])
+        return te.compute((1, *x.shape[1:]), lambda _, j, k, ll: x[i, j, k, ll])
 
     return (
         op.reshape(op.tensor_expr_op(_te_get_ith, "unbind_to_five", [x, 0]), x.shape[1:]),
@@ -187,7 +187,7 @@ class RWKV6_FNN(nn.Module):
         return r * self.value(xv), state
 
 
-class RWKV6_Attention(nn.Module):  # pylint: disable=too-many-instance-attributes
+class RWKV6_Attention(nn.Module):
     """Attention layer for RWKV."""
 
     def __init__(self, config: RWKV6Config, layer_id: int):
@@ -226,10 +226,10 @@ class RWKV6_Attention(nn.Module):  # pylint: disable=too-many-instance-attribute
         self.layer_id = layer_id
         self.dtype = "float32"
 
-    def forward(self, x: Tensor, state: RNNState):  # pylint: disable=too-many-locals
+    def forward(self, x: Tensor, state: RNNState):
         batch, seq_len, hidden_size = x.shape
         assert hidden_size == self.hidden_size
-        B, T, H, N = (  # pylint: disable=redefined-outer-name
+        B, T, H, N = (
             batch,
             seq_len,
             self.head_size,
@@ -377,7 +377,7 @@ class RWKV6_Model(nn.Module):
         return self.ln_out(hidden_states), state
 
 
-class RWKV6_ForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attributes
+class RWKV6_ForCausalLM(nn.Module):
     """Same as LlamaForCausalLM, except for the use of sliding window attention."""
 
     def __init__(self, config: RWKV6Config):
@@ -436,14 +436,16 @@ class RWKV6_ForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attribu
 
     def create_rnn_state(
         self,
-        max_batch_size: tir.Var,
-        max_history: tir.Var,
+        max_batch_size: tirx.Var,
+        max_history: tirx.Var,
     ) -> Object:
         """Create RNN state."""
         init_values = [
-            op.zeros((self.hidden_size,), dtype=self.dtype),  # ATT_X
-            op.zeros((self.num_heads, self.head_size, self.head_size), dtype="float32"),  # ATT_KV
-            op.zeros((self.hidden_size,), dtype=self.dtype),  # FFN_X
+            R.const(np.zeros((self.hidden_size,), self.dtype)),  # ATT_X
+            R.const(
+                np.zeros((self.num_heads, self.head_size, self.head_size), "float32")
+            ),  # ATT_KV
+            R.const(np.zeros((self.hidden_size,), self.dtype)),  # FFN_X
         ]
         return RNNState.create(
             max_batch_size=max_batch_size,

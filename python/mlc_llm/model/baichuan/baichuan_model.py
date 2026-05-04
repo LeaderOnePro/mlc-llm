@@ -3,13 +3,14 @@ Implementation for BAICHUAN architecture.
 """
 
 import dataclasses
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional  # noqa: UP035
 
-from tvm import te, tir
+from tvm import tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 
 from mlc_llm import op as op_ext
+from mlc_llm.model.model_utils import index_last_token
 from mlc_llm.nn import PagedKVCache, RopeMode
 from mlc_llm.support import logging
 from mlc_llm.support import tensor_parallel as tp
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
-class BaichuanConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
+class BaichuanConfig(ConfigBase):
     """Configuration of the Baichuan model."""
 
     vocab_size: int
@@ -40,7 +41,7 @@ class BaichuanConfig(ConfigBase):  # pylint: disable=too-many-instance-attribute
     tensor_parallel_shards: int = 1
     max_batch_size: int = 1
     head_dim: int = 0
-    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)  # noqa: UP006
 
     def __post_init__(self):
         if self.context_window_size == 0:
@@ -80,10 +81,7 @@ class BaichuanConfig(ConfigBase):  # pylint: disable=too-many-instance-attribute
             self.prefill_chunk_size = min(self.context_window_size, 8192)
 
 
-# pylint: disable=invalid-name,missing-docstring
-
-
-class BaichuanAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
+class BaichuanAttention(nn.Module):
     def __init__(self, config: BaichuanConfig):
         self.hidden_size = config.hidden_size
         if config.num_attention_heads % config.tensor_parallel_shards != 0:
@@ -196,7 +194,7 @@ class BaichuanModel(nn.Module):
         return hidden_states
 
 
-class BaichuanForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attributes
+class BaichuanForCausalLM(nn.Module):
     def __init__(self, config: BaichuanConfig):
         self.model = BaichuanModel(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -239,12 +237,8 @@ class BaichuanForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attri
     def prefill(self, input_embed: Tensor, paged_kv_cache: PagedKVCache):
         op_ext.configure()
 
-        def _index(x: te.Tensor):  # x[:-1,:]
-            b, s, d = x.shape
-            return te.compute((b, 1, d), lambda i, _, k: x[i, s - 1, k], name="index")
-
         hidden_states = self.model(input_embed, paged_kv_cache)
-        hidden_states = op.tensor_expr_op(_index, name_hint="index", args=[hidden_states])
+        hidden_states = index_last_token(hidden_states)
         logits = self.lm_head(hidden_states)
         if logits.dtype != "float32":
             logits = logits.astype("float32")
@@ -278,13 +272,13 @@ class BaichuanForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attri
         logits = self.batch_forward(input_embeds, paged_kv_cache)
         return logits, paged_kv_cache
 
-    def create_paged_kv_cache(  # pylint: disable=too-many-arguments
+    def create_paged_kv_cache(
         self,
-        max_batch_size: tir.Var,
-        max_total_seq_len: tir.Var,
-        prefill_chunk_size: tir.Var,
-        page_size: tir.Var,
-        support_sliding_window: tir.Var,
+        max_batch_size: tirx.Var,
+        max_total_seq_len: tirx.Var,
+        prefill_chunk_size: tirx.Var,
+        page_size: tirx.Var,
+        support_sliding_window: tirx.Var,
     ) -> PagedKVCache:
         return PagedKVCache.create_generic(
             attn_kind="mha",

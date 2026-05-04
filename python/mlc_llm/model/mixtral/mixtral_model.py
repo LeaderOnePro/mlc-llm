@@ -2,7 +2,7 @@
 
 import dataclasses
 
-from tvm import tir
+from tvm import tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 
@@ -22,14 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
-class MixtralConfig(LlamaConfig):  # pylint: disable=too-many-instance-attributes
+class MixtralConfig(LlamaConfig):
     """Configuration of the Mixtral model."""
 
     num_local_experts: int = 0
     num_experts_per_tok: int = 0
-
-
-# pylint: disable=invalid-name,missing-docstring,too-many-locals,fixme
 
 
 class MixtralMoE(nn.Module):
@@ -111,14 +108,12 @@ class MixtralMoE(nn.Module):
             x = _expert_forward(x, indptr)
             x = op_ext.moe_misc.scatter_output(x, reverse_indices)
         # x: [num_tokens, experts_per_tok, hidden_size]
-        x = x.reshape(  # pylint: disable=too-many-function-args
-            num_tokens, experts_per_tok, hidden_size
-        ) * expert_weights.reshape(  # pylint: disable=too-many-function-args
+        x = x.reshape(num_tokens, experts_per_tok, hidden_size) * expert_weights.reshape(
             num_tokens, experts_per_tok, 1
         )
         # x: [num_tokens, hidden_size]
         x = op_ext.moe_misc.moe_sum(x, dim=1)
-        x = x.reshape(batch_size, seq_len, hidden_size)  # pylint: disable=too-many-function-args
+        x = x.reshape(batch_size, seq_len, hidden_size)
         return x
 
 
@@ -152,7 +147,7 @@ class MixtralDecoderLayer(nn.Module):
         self.tensor_parallel_shards = config.tensor_parallel_shards
         _set_tp()
 
-    def forward(self, hidden_states: Tensor, attention_mask: Tensor, total_seq_len: tir.Var):
+    def forward(self, hidden_states: Tensor, attention_mask: Tensor, total_seq_len: tirx.Var):
         """Forward pass of a decoder layer; calculate attention, and add an residual connection."""
         out = self.self_attn(self.input_layernorm(hidden_states), attention_mask, total_seq_len)
         hidden_states = self._apply_residual(out, residual=hidden_states)

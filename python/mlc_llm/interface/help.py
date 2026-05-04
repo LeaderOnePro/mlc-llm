@@ -36,6 +36,10 @@ Model architecture such as "llama". If not set, it is inferred from `mlc-chat-co
     "device_compile": """
 The GPU device to compile the model to. If not set, it is inferred from GPUs available locally.
 """.strip(),
+    "enable_subgroups": """
+Enable WebGPU subgroups in codegen. This only applies to WebGPU targets and will set
+supports_subgroups accordingly.
+""".strip(),
     "device_quantize": """
 The device used to do quantization such as "cuda" or "cuda:0". Will detect from local available GPUs
 if not specified.
@@ -169,7 +173,7 @@ Enable Chrome Tracing for the server.
 After enabling, you can send POST request to the "debug/dump_event_trace" entrypoint
 to get the Chrome Trace. For example,
 "curl -X POST http://127.0.0.1:8000/debug/dump_event_trace -H "Content-Type: application/json" -d '{"model": "dist/llama"}'"
-""".strip(),
+""".strip(),  # noqa: E501
     "mode_serve": """
 The engine mode in MLC LLM. We provide three preset modes: "local", "interactive" and "server".
 The default mode is "local".

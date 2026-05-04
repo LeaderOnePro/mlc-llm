@@ -5,7 +5,7 @@ Implementation for EAGLE architecture.
 import dataclasses
 from typing import Optional
 
-from tvm import tir
+from tvm import tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 
@@ -23,9 +23,6 @@ class EagleConfig(LlamaConfig):
     """Configuration of the Eagle model."""
 
     bias: bool = True  # Whether to use bias in the fc layers
-
-
-# pylint: disable=invalid-name,missing-docstring
 
 
 class EagleDecoderLayer(nn.Module):
@@ -76,7 +73,7 @@ class EagleDecoderLayer(nn.Module):
         return out + residual
 
 
-class EagleForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attributes
+class EagleForCausalLM(nn.Module):
     def __init__(self, config: EagleConfig):
         # Put the model definition here to align with EAGLE's original structure
         assert config.hidden_size % config.num_attention_heads == 0
@@ -164,13 +161,13 @@ class EagleForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attribut
         hidden_states = self.batch_forward(hidden_states, paged_kv_cache)
         return hidden_states, paged_kv_cache
 
-    def create_paged_kv_cache(  # pylint: disable=too-many-arguments
+    def create_paged_kv_cache(
         self,
-        max_batch_size: tir.Var,
-        max_total_seq_len: tir.Var,
-        prefill_chunk_size: tir.Var,
-        page_size: tir.Var,
-        support_sliding_window: tir.Var,
+        max_batch_size: tirx.Var,
+        max_total_seq_len: tirx.Var,
+        prefill_chunk_size: tirx.Var,
+        page_size: tirx.Var,
+        support_sliding_window: tirx.Var,
     ) -> PagedKVCache:
         return PagedKVCache.create_generic(
             attn_kind="mha",

@@ -1,8 +1,9 @@
 """Common utilities for quantization"""
 
-from typing import Callable, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Callable, List, Optional  # noqa: UP035
 
-from tvm import IRModule, relax, te, tir
+from tvm import IRModule, relax, te, tirx
 from tvm.relax.frontend import nn
 from tvm.runtime import DataType, DataTypeCode
 from tvm.s_tir import dlight as dl
@@ -11,26 +12,26 @@ from tvm.target import Target
 from mlc_llm.support import tensor_parallel as tp
 
 
-def convert_uint_to_float(  # pylint: disable=too-many-arguments
+def convert_uint_to_float(
     weight: te.Tensor,
     bits: int,
     num_elem_per_storage: int,
     storage_dtype: str,
     model_dtype: str,
     axis: int = -1,
-    out_shape: Optional[List[tir.PrimExpr]] = None,
+    out_shape: Optional[List[tirx.PrimExpr]] = None,  # noqa: UP006
     ft_reorder: Optional[bool] = False,
 ) -> te.Tensor:
     """Convert a quantized uint weight to an unquantized float weight."""
-    tir_bin_mask = tir.const((1 << bits) - 1, storage_dtype)
+    tir_bin_mask = tirx.const((1 << bits) - 1, storage_dtype)
     if out_shape is None:
         out_shape = weight.shape
         out_shape[axis] *= num_elem_per_storage
     axis = axis if axis >= 0 else len(out_shape) + axis
     return te.compute(
         shape=out_shape,
-        fcompute=lambda *idx: tir.bitwise_and(
-            tir.shift_right(
+        fcompute=lambda *idx: tirx.bitwise_and(
+            tirx.shift_right(
                 weight(*idx[:axis], idx[axis] // num_elem_per_storage, *idx[axis + 1 :]),
                 (
                     (
@@ -49,7 +50,7 @@ def convert_uint_to_float(  # pylint: disable=too-many-arguments
 
 def is_final_fc(name: str) -> bool:
     """Determines whether the parameter is the last layer based on its name."""
-    # TODO: use more specious condition to determine final fc  # pylint: disable=fixme
+    # TODO: use more specious condition to determine final fc
     return name in ["head", "lm_head", "lm_head.linear", "embed_out"]
 
 
@@ -60,15 +61,13 @@ def is_moe_gate(name: str, node: nn.Linear) -> bool:
 
 def compile_quantize_func(mod: IRModule, device) -> Callable:
     """Compile a quantization function for a given device."""
-    device_type = device._DEVICE_TYPE_TO_NAME[  # pylint: disable=protected-access
-        device.dlpack_device_type()
-    ]
+    device_type = device._DEVICE_TYPE_TO_NAME[device.dlpack_device_type()]
     if device_type in ["cuda", "rocm", "metal", "vulkan", "opencl"]:
         target = Target.current()
         if target is None:
             target = Target.from_device(device)
         with target:
-            mod = dl.ApplyDefaultSchedule(  # type: ignore   # pylint: disable=not-callable
+            mod = dl.ApplyDefaultSchedule(
                 dl.gpu.Reduction(),
                 dl.gpu.GeneralReduction(),
                 dl.gpu.Fallback(),
@@ -79,7 +78,7 @@ def compile_quantize_func(mod: IRModule, device) -> Callable:
     else:
         raise NotImplementedError(f"Device type {device_type} is not supported")
     ex = relax.build(mod, target=target)
-    vm = relax.VirtualMachine(ex, device)  # pylint: disable=invalid-name
+    vm = relax.VirtualMachine(ex, device)
     return vm["main"]
 
 
@@ -95,21 +94,21 @@ def apply_sharding(shard_strategy, name: str, weight: nn.Parameter):
         raise NotImplementedError(f"Unknowing sharding strategy: {shard_strategy}")
 
 
-def convert_uint_packed_fp8_to_float(  # pylint: disable=too-many-arguments
+def convert_uint_packed_fp8_to_float(
     weight: te.Tensor,
     num_elem_per_storage: int,
     storage_dtype: str,
     model_dtype: str,
     quant_dtype: str,
     axis: int = -1,
-    out_shape: Optional[Sequence[tir.PrimExpr]] = None,
+    out_shape: Optional[Sequence[tirx.PrimExpr]] = None,
 ) -> te.Tensor:
     """Unpack a fp8 value from the storage dtype and convert to float."""
     assert quant_dtype in ["float8_e4m3fn", "float8_e5m2"]
     assert DataType(storage_dtype).type_code == DataTypeCode.UINT
     bits = DataType(quant_dtype).bits
     elem_storage_dtype = DataType(f"uint{bits}")
-    tir_bin_mask = tir.const((1 << bits) - 1, "uint8")
+    tir_bin_mask = tirx.const((1 << bits) - 1, "uint8")
     if axis < 0:
         axis += len(weight.shape)
     if out_shape is None:
@@ -121,10 +120,10 @@ def convert_uint_packed_fp8_to_float(  # pylint: disable=too-many-arguments
     axis = axis if axis >= 0 else len(out_shape) + axis
     return te.compute(
         shape=out_shape,
-        fcompute=lambda *idx: tir.reinterpret(
+        fcompute=lambda *idx: tirx.reinterpret(
             quant_dtype,
-            tir.bitwise_and(
-                tir.shift_right(
+            tirx.bitwise_and(
+                tirx.shift_right(
                     weight(*idx[:axis], idx[axis] // num_elem_per_storage, *idx[axis + 1 :]),
                     ((idx[axis] % num_elem_per_storage) * bits).astype(storage_dtype),
                 ).astype(elem_storage_dtype),
@@ -140,8 +139,8 @@ def pack_weight(
     num_elem_per_storage: int,
     weight_dtype: str,
     storage_dtype: str,
-    out_shape: Optional[Sequence[tir.PrimExpr]] = None,
-):  # pylint: disable=too-many-arguments
+    out_shape: Optional[Sequence[tirx.PrimExpr]] = None,
+):
     """Convert a tensor to a packed format by packing consecutive bits.
     This can be useful for sub-byte quantization.
 
@@ -157,7 +156,7 @@ def pack_weight(
         The dtype of the input tensor.
     storage_dtype : str
         The dtype of the packed tensor.
-    out_shape : Optional[Sequence[tir.PrimExpr]]
+    out_shape : Optional[Sequence[tirx.PrimExpr]]
         The output shape of the packed tensor. Zero-padding is added if needed.
     """
     assert weight.dtype == storage_dtype
@@ -169,18 +168,18 @@ def pack_weight(
     if out_shape is None:
         out_shape = (
             *shape[:axis],
-            tir.ceildiv(k, num_elem_per_storage),
+            tirx.ceildiv(k, num_elem_per_storage),
             *shape[axis + 1 :],
         )
-    r = te.reduce_axis((0, num_elem_per_storage), name="r")  # pylint: disable=invalid-name
+    r = te.reduce_axis((0, num_elem_per_storage), name="r")
     packed_weight = te.compute(
         shape=out_shape,
-        fcompute=lambda *idx: tir.sum(
-            tir.if_then_else(
+        fcompute=lambda *idx: tirx.sum(
+            tirx.if_then_else(
                 idx[axis] * num_elem_per_storage + r < k,
                 weight(*idx[:axis], idx[axis] * num_elem_per_storage + r, *idx[axis + 1 :])
                 << (r * DataType(weight_dtype).bits),
-                tir.const(0, storage_dtype),
+                tirx.const(0, storage_dtype),
             ),
             axis=r,
         ),

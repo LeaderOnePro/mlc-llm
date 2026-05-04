@@ -1,13 +1,13 @@
 """A compiler pass that fuses transpose + matmul."""
 
 import tvm
-from tvm import IRModule, relax, te, tir
+from tvm import IRModule, relax, te, tirx
 from tvm.relax.dpl.pattern import is_op, wildcard
 from tvm.relax.expr_functor import PyExprMutator, mutator
 
 
 @tvm.transform.module_pass(opt_level=0, name="FuseTransposeMatmul")
-class FuseTransposeMatmul:  # pylint: disable=too-few-public-methods
+class FuseTransposeMatmul:
     """A compiler pass that fuses transpose + matmul."""
 
     def transform_module(self, mod: IRModule, _ctx: tvm.transform.PassContext) -> IRModule:
@@ -30,12 +30,10 @@ class FuseTransposeMatmul:  # pylint: disable=too-few-public-methods
 
 def _pattern():
     """Pattern for transpose + matmul."""
-    # pylint: disable=invalid-name
     w = wildcard()
     x = wildcard()
     wT = is_op("relax.permute_dims")(w)
     o = is_op("relax.matmul")(x, wT)
-    # pylint: enable=invalid-name
     annotations = {"o": o, "w": w, "x": x, "wT": wT}
 
     def _check(context: relax.transform.PatternCheckContext) -> bool:
@@ -52,15 +50,12 @@ def _pattern():
     return o, annotations, _check
 
 
-# pylint: disable=missing-docstring,invalid-name
-
-
 @mutator
-class _TransposeMatmulFuser(PyExprMutator):  # pylint: disable=abstract-method
+class _TransposeMatmulFuser(PyExprMutator):
     def __init__(self, mod):
         super().__init__(mod)
 
-    def visit_call_(  # pylint: disable=arguments-renamed
+    def visit_call_(
         self,
         call: relax.Call,
     ) -> relax.Expr:
@@ -106,9 +101,9 @@ class _TransposeMatmulFuser(PyExprMutator):  # pylint: disable=abstract-method
                         a_dim = a_shape[i if is_a_larger else i - offset]
                         b_dim = b_shape[i if not is_a_larger else i - offset]
                         dim_equal = a_dim == b_dim
-                        if not isinstance(dim_equal, tir.IntImm) or dim_equal == 0:
-                            a_dim_is_one = isinstance(a_dim, tir.IntImm) and a_dim == 1
-                            b_dim_is_one = isinstance(b_dim, tir.IntImm) and b_dim == 1
+                        if not isinstance(dim_equal, tirx.IntImm) or dim_equal == 0:
+                            a_dim_is_one = isinstance(a_dim, tirx.IntImm) and a_dim == 1
+                            b_dim_is_one = isinstance(b_dim, tirx.IntImm) and b_dim == 1
                             a_indices.append(0 if a_dim_is_one else idx_spatial[i])
                             b_indices.append(0 if b_dim_is_one else idx_spatial[i])
                         else:
@@ -131,7 +126,7 @@ class _TransposeMatmulFuser(PyExprMutator):  # pylint: disable=abstract-method
 
             return te.compute(
                 output_shape,
-                lambda *idx: matmul_compute(*idx),  # pylint: disable=unnecessary-lambda
+                lambda *idx: matmul_compute(*idx),
                 name="NT_matmul",
             )
 

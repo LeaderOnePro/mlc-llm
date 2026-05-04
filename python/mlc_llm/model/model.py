@@ -1,7 +1,7 @@
 """A centralized registry of all existing model architures and their configurations."""
 
 import dataclasses
-from typing import Any, Callable, Dict, Literal, Optional, Tuple
+from typing import Any, Callable, Dict, Literal, Optional, Tuple  # noqa: UP035
 
 from tvm.relax.frontend import nn
 
@@ -35,6 +35,7 @@ from .mistral import mistral_loader, mistral_model
 from .mixtral import mixtral_loader, mixtral_model
 from .nemotron import nemotron_loader, nemotron_model
 from .olmo import olmo_loader, olmo_model
+from .olmo2 import olmo2_loader, olmo2_model
 from .orion import orion_loader, orion_model
 from .phi import phi_loader, phi_model
 from .phi3 import phi3_loader, phi3_model
@@ -44,6 +45,7 @@ from .qwen2 import qwen2_loader, qwen2_model
 from .qwen2_moe import qwen2_moe_loader, qwen2_moe_model
 from .qwen3 import qwen3_loader, qwen3_model
 from .qwen3_moe import qwen3_moe_loader, qwen3_moe_model
+from .qwen35 import qwen35_loader, qwen35_model
 from .rwkv5 import rwkv5_loader, rwkv5_model
 from .rwkv6 import rwkv6_loader, rwkv6_model
 from .stable_lm import stablelm_loader, stablelm_model
@@ -58,7 +60,7 @@ a class method `from_file` with the following signature:
 """
 
 FuncGetExternMap = Callable[[ModelConfig, Quantization], ExternMapping]
-FuncQuantization = Callable[[ModelConfig, Quantization], Tuple[nn.Module, QuantizeMapping]]
+FuncQuantization = Callable[[ModelConfig, Quantization], Tuple[nn.Module, QuantizeMapping]]  # noqa: UP006
 
 
 @dataclasses.dataclass
@@ -114,8 +116,8 @@ class Model:
     name: str
     config: ModelConfig
     model: Callable[[ModelConfig], nn.Module]
-    source: Dict[str, FuncGetExternMap]
-    quantize: Dict[str, FuncQuantization]
+    source: Dict[str, FuncGetExternMap]  # noqa: UP006
+    quantize: Dict[str, FuncQuantization]  # noqa: UP006
 
     model_task: Literal["chat", "embedding"] = "chat"
     embedding_metadata: Optional[EmbeddingMetadata] = None
@@ -129,7 +131,7 @@ class Model:
             )
 
 
-MODELS: Dict[str, Model] = {
+MODELS: Dict[str, Model] = {  # noqa: UP006
     "llama": Model(
         name="llama",
         model=llama_model.LlamaForCausalLM,
@@ -403,6 +405,30 @@ MODELS: Dict[str, Model] = {
             normalize=True,
         ),
     ),
+    "qwen3_5": Model(
+        name="qwen3_5",
+        model=qwen35_model.Qwen35LMHeadModel,
+        config=qwen35_model.Qwen35Config,
+        source={
+            "huggingface-torch": qwen35_loader.huggingface,
+            "huggingface-safetensor": qwen35_loader.huggingface,
+        },
+        quantize=make_quantization_functions(
+            qwen35_model.Qwen35LMHeadModel,
+        ),
+    ),
+    "qwen3_5_text": Model(
+        name="qwen3_5_text",
+        model=qwen35_model.Qwen35LMHeadModel,
+        config=qwen35_model.Qwen35Config,
+        source={
+            "huggingface-torch": qwen35_loader.huggingface,
+            "huggingface-safetensor": qwen35_loader.huggingface,
+        },
+        quantize=make_quantization_functions(
+            qwen35_model.Qwen35LMHeadModel,
+        ),
+    ),
     "qwen3_moe": Model(
         name="qwen3_moe",
         model=qwen3_moe_model.Qwen3MoeForCausalLM,
@@ -673,6 +699,19 @@ MODELS: Dict[str, Model] = {
         quantize=make_quantization_functions(
             olmo_model.OLMoForCausalLM,
             supports_awq=True,
+            supports_per_tensor=True,
+        ),
+    ),
+    "olmo2": Model(
+        name="olmo2",
+        model=olmo2_model.OLMo2ForCausalLM,
+        config=olmo2_model.OLMo2Config,
+        source={
+            "huggingface-torch": olmo2_loader.huggingface,
+            "huggingface-safetensor": olmo2_loader.huggingface,
+        },
+        quantize=make_quantization_functions(
+            olmo2_model.OLMo2ForCausalLM,
             supports_per_tensor=True,
         ),
     ),

@@ -2,9 +2,9 @@
 
 import dataclasses
 from contextlib import contextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional  # noqa: UP035
 
-from tvm import te, tir, topi
+from tvm import te, tirx, topi
 from tvm.relax.frontend import nn
 
 
@@ -31,22 +31,22 @@ class ShardSingleDim:
 
     name: str
     dim: int
-    segs: Optional[List[int]] = None
+    segs: Optional[List[int]] = None  # noqa: UP006
 
-    def gen_tir(self, shards: int, weight: nn.Tensor) -> tir.PrimFunc:
+    def gen_tir(self, shards: int, weight: nn.Tensor) -> tirx.PrimFunc:
         """Generate a TIR function that shards the weight tensor by its rows."""
         shape = weight.shape
         segs = self.segs or [shape[self.dim]]
         assert sum(segs) == shape[self.dim]
         # NOTE: we use int64 to prevent int32 overflow
-        shape = [tir.IntImm("int64", v) for v in shape]
-        segs = [tir.IntImm("int64", v) for v in segs]
+        shape = [tirx.IntImm("int64", v) for v in shape]
+        segs = [tirx.IntImm("int64", v) for v in segs]
         w = te.placeholder(
-            [tir.IntImm("int64", v) for v in self._compute_in_shape(shards, weight)],
+            [tirx.IntImm("int64", v) for v in self._compute_in_shape(shards, weight)],
             weight.dtype,
             name="w",
         )
-        ws: List[te.Tensor] = []
+        ws: List[te.Tensor] = []  # noqa: UP006
         offset = 0
         for idx, sub_seg in enumerate(segs):
             ws.append(
@@ -59,15 +59,17 @@ class ShardSingleDim:
                                 *shape[self.dim + 1 :],
                             ),
                             lambda *idx: w[
-                                idx[: self.dim]
-                                + (idx[self.dim] + offset,)  # pylint: disable=cell-var-from-loop
-                                + idx[self.dim + 1 :]
+                                (
+                                    *idx[: self.dim],
+                                    idx[self.dim] + offset,
+                                    *idx[self.dim + 1 :],
+                                )
                             ],
                             name=f"w_{idx}",
                         ),
                         (
                             *shape[: self.dim],
-                            tir.IntImm("int64", shards),
+                            tirx.IntImm("int64", shards),
                             sub_seg,
                             *shape[self.dim + 1 :],
                         ),
@@ -80,7 +82,7 @@ class ShardSingleDim:
         func = te.create_prim_func([w, o])
         return func
 
-    def gen_shard_info(self, shards: int, weight: nn.Tensor) -> Dict[str, Any]:
+    def gen_shard_info(self, shards: int, weight: nn.Tensor) -> Dict[str, Any]:  # noqa: UP006
         """Generate shard info for this sharding strategy."""
         return {
             "func_name": self.name,
@@ -89,7 +91,7 @@ class ShardSingleDim:
             "out_dtype": weight.dtype,
         }
 
-    def _compute_in_shape(self, shards: int, weight: nn.Tensor) -> List[int]:
+    def _compute_in_shape(self, shards: int, weight: nn.Tensor) -> List[int]:  # noqa: UP006
         """Compute the weight shape before sharding."""
         shape = weight.shape
         return [*shape[: self.dim], shape[self.dim] * shards, *shape[self.dim + 1 :]]

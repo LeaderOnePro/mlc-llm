@@ -1,15 +1,13 @@
 """A compiler pass that dispatch low-batch-gemm to gemv schedule."""
 
 import tvm
-from tvm import tir
+from tvm import tirx
 from tvm.ir.module import IRModule
 from tvm.s_tir import dlight as dl
 
-# pylint: disable=too-many-locals,not-callable
-
 
 @tvm.transform.module_pass(opt_level=0, name="LowBatchGemvSpecialize")
-class LowBatchGemvSpecialize:  # pylint: disable=too-few-public-methods
+class LowBatchGemvSpecialize:
     """A compiler pass that dispatch low-batch-gemm to gemv schedule."""
 
     def transform_module(
@@ -19,7 +17,7 @@ class LowBatchGemvSpecialize:  # pylint: disable=too-few-public-methods
     ) -> IRModule:
         """IRModule-level transformation"""
         for g_var, func in mod.functions_items():
-            if isinstance(func, tir.PrimFunc):
+            if isinstance(func, tirx.PrimFunc):
                 low_batch_range = [2, 8]
                 buckets = [2, 4]
                 low_batch_funcs = []
@@ -38,7 +36,7 @@ class LowBatchGemvSpecialize:  # pylint: disable=too-few-public-methods
                 buffers = func.buffer_map.values()
                 shapes = [buffer.shape for buffer in buffers]
                 symbolic_vars = set(
-                    expr for shape in shapes for expr in shape if isinstance(expr, tir.Var)
+                    expr for shape in shapes for expr in shape if isinstance(expr, tirx.Var)
                 )
                 if len(symbolic_vars) != 1:
                     continue
@@ -48,18 +46,18 @@ class LowBatchGemvSpecialize:  # pylint: disable=too-few-public-methods
                     dl.gpu.Matmul(),
                 )(gemm_mod)
                 gemm_func = gemm_mod["main"]
-                sym_var = list(symbolic_vars)[0]
+                sym_var = next(iter(symbolic_vars))
                 body = gemm_func.body
                 for i, range_limit in reversed(list(enumerate(low_batch_range))):
-                    body = tir.IfThenElse(
-                        tir.op.tvm_thread_invariant(sym_var <= range_limit),
+                    body = tirx.IfThenElse(
+                        tirx.op.tvm_thread_invariant(sym_var <= range_limit),
                         low_batch_funcs[i].body,
                         body,
                     )
-                body = tir.SBlock([], [], [], "root", body)
-                body = tir.SBlockRealize([], True, body)
+                body = tirx.SBlock([], [], [], "root", body)
+                body = tirx.SBlockRealize([], True, body)
                 new_func = func.with_body(body)
-                new_func = new_func.with_attr("tir.is_scheduled", 1)
-                new_func = new_func.with_attr("tir.HoistIfThenElseExprWithBlock", 1)
+                new_func = new_func.with_attr("tirx.is_scheduled", 1)
+                new_func = new_func.with_attr("tirx.HoistIfThenElseExprWithBlock", 1)
                 mod.update_func(g_var, new_func)
         return mod

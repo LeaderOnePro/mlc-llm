@@ -3,13 +3,14 @@ Implementation for Phi-3 architecture.
 """
 
 import dataclasses
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional  # noqa: UP035
 
-from tvm import te, tir
+from tvm import tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 
 from mlc_llm import op as op_ext
+from mlc_llm.model.model_utils import index_last_token
 from mlc_llm.nn import PagedKVCache, RopeMode
 from mlc_llm.support import logging
 from mlc_llm.support import tensor_parallel as tp
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
-class Phi3Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
+class Phi3Config(ConfigBase):
     """Configuration of the Phi-3 model."""
 
     model_type: str  # "phi", "phi-msft", "mixformer-sequential"
@@ -33,7 +34,7 @@ class Phi3Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
     num_key_value_heads: int
     max_position_embeddings: int
     position_embedding_base: int = 0
-    rope_scaling: Optional[Dict[str, Any]] = None
+    rope_scaling: Optional[Dict[str, Any]] = None  # noqa: UP006
     original_max_position_embeddings: int = 0
     context_window_size: int = 0
     prefill_chunk_size: int = 0
@@ -42,7 +43,7 @@ class Phi3Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
     max_batch_size: int = 1
     tie_word_embeddings: bool = False
     partial_rotary_factor: float = 1.0
-    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)  # noqa: UP006
 
     def __post_init__(self):
         if self.position_embedding_base == 0:
@@ -57,9 +58,9 @@ class Phi3Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
                 if self.rope_scaling["type"] == "su":
                     self.rope_scaling["type"] = "longrope"
 
-                assert (
-                    self.rope_scaling["type"] == "longrope"
-                ), f"Unsupported RoPE scaling type {self.rope_scaling['rope_type']} for Phi3"
+                assert self.rope_scaling["type"] == "longrope", (
+                    f"Unsupported RoPE scaling type {self.rope_scaling['rope_type']} for Phi3"
+                )
                 self.rope_scaling["rope_type"] = self.rope_scaling["type"]
                 (
                     self.rope_scaling["max_position_embeddings"],
@@ -96,9 +97,6 @@ class Phi3Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
         assert self.num_attention_heads % self.num_key_value_heads == 0
 
 
-# pylint: disable=invalid-name,missing-docstring
-
-
 class Phi3Embedding(nn.Embedding):
     """The embedding module that can be shared with the final lm_head."""
 
@@ -129,7 +127,7 @@ class Phi3MLP(nn.Module):
         return self.down_proj(up_states)
 
 
-class PhiMHA(nn.Module):  # pylint: disable=too-many-instance-attributes
+class PhiMHA(nn.Module):
     def __init__(self, config: Phi3Config):
         self.num_q_heads = config.num_attention_heads // config.tensor_parallel_shards
         assert config.num_attention_heads % config.tensor_parallel_shards == 0, (
@@ -230,7 +228,6 @@ class Phi3Model(nn.Module):
 
 
 class Phi3ForCausalLM(nn.Module):
-    # pylint: disable=too-many-instance-attributes
     def __init__(self, config: Phi3Config) -> None:
         super().__init__()
 
@@ -286,12 +283,8 @@ class Phi3ForCausalLM(nn.Module):
     def prefill(self, input_embed: Tensor, paged_kv_cache: PagedKVCache):
         op_ext.configure()
 
-        def _index(x: te.Tensor):
-            b, s, d = x.shape
-            return te.compute((b, 1, d), lambda i, _, k: x[i, s - 1, k], name="index")
-
         hidden_states = self.transformer(input_embed, paged_kv_cache)
-        hidden_states = op.tensor_expr_op(_index, name_hint="index", args=[hidden_states])
+        hidden_states = index_last_token(hidden_states)
         logits = self.get_logits(hidden_states)
         return logits, paged_kv_cache
 
@@ -327,13 +320,13 @@ class Phi3ForCausalLM(nn.Module):
         embeds = self.transformer.embd(input_ids)
         return embeds
 
-    def create_paged_kv_cache(  # pylint: disable=too-many-arguments
+    def create_paged_kv_cache(
         self,
-        max_batch_size: tir.Var,
-        max_total_seq_len: tir.Var,
-        prefill_chunk_size: tir.Var,
-        page_size: tir.Var,
-        support_sliding_window: tir.Var,
+        max_batch_size: tirx.Var,
+        max_total_seq_len: tirx.Var,
+        prefill_chunk_size: tirx.Var,
+        page_size: tirx.Var,
+        support_sliding_window: tirx.Var,
     ) -> PagedKVCache:
         return PagedKVCache.create_generic(
             attn_kind="mha",

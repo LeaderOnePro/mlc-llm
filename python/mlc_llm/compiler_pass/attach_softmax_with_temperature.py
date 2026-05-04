@@ -1,22 +1,24 @@
 """A compiler pass that attaches two-stage softmax with temperature."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional  # noqa: UP035
 
 import tvm
-from tvm import relax, tir
+from tvm import relax, tirx
 from tvm.ir.module import IRModule
 from tvm.relax.expr_functor import PyExprMutator, mutator
-from tvm.script import tir as T
+from tvm.script import tirx as T
 
 from ..support.max_thread_check import get_max_num_threads_per_block
 
 
 @tvm.transform.module_pass(opt_level=0, name="AttachSoftmaxWithTemperature")
-class AttachSoftmaxWithTemperature:  # pylint: disable=too-few-public-methods
+class AttachSoftmaxWithTemperature:
     """Rewrites one-shot softmax into two-stage softmax."""
 
     def __init__(
-        self, target: tvm.target.Target, metadata: Optional[Dict[str, Any]] = None
+        self,
+        target: tvm.target.Target,
+        metadata: Optional[Dict[str, Any]] = None,  # noqa: UP006
     ) -> None:
         self.target = target
         self.metadata = metadata
@@ -27,12 +29,12 @@ class AttachSoftmaxWithTemperature:  # pylint: disable=too-few-public-methods
 
 
 @mutator
-class _Rewriter(PyExprMutator):  # pylint: disable=abstract-method
+class _Rewriter(PyExprMutator):
     def __init__(
         self,
         mod: IRModule,
         target: tvm.target.Target,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,  # noqa: UP006
     ) -> None:
         super().__init__(mod)
         self.mod = mod
@@ -43,14 +45,14 @@ class _Rewriter(PyExprMutator):  # pylint: disable=abstract-method
 
     def transform(self) -> IRModule:
         """Entry point"""
-        batch_size = tir.SizeVar("batch_size", "int64")
-        vocab_size = tir.SizeVar("vocab_size", "int64")
+        batch_size = tirx.SizeVar("batch_size", "int64")
+        vocab_size = tirx.SizeVar("vocab_size", "int64")
         dtype = "float32"
         logits = relax.Var("logits", relax.TensorStructInfo([batch_size, 1, vocab_size], dtype))
         temperature = relax.Var("temperature", relax.TensorStructInfo([batch_size], dtype))
         with self.builder_.function("softmax_with_temperature", params=[logits, temperature]):
             with self.builder_.dataflow():
-                output_struct_info = logits.struct_info  # pylint: disable=no-member
+                output_struct_info = logits.struct_info
                 new_shape = relax.ShapeExpr([batch_size, vocab_size])
                 logits = relax.call_pure_packed(
                     "vm.builtin.reshape",
@@ -96,9 +98,7 @@ class _Rewriter(PyExprMutator):  # pylint: disable=abstract-method
         return self.builder_.get()
 
 
-def _get_lse_and_softmax_func(  # pylint: disable=too-many-locals,too-many-statements
-    target: tvm.target.Target, chunk_size: int, active_vocab_size: int
-):
+def _get_lse_and_softmax_func(target: tvm.target.Target, chunk_size: int, active_vocab_size: int):
     # NOTE: A quick note on the softmax implementation.
     # We once tried to multiply every element by log2e which can be computed
     # potentially more efficiently on hardware.
@@ -116,15 +116,14 @@ def _get_lse_and_softmax_func(  # pylint: disable=too-many-locals,too-many-state
     # of the max value. The second kernel merges the max and counts, and set the
     # softmax of the maximum values to "max_value / max_count".
 
-    # pylint: disable=invalid-name
     @T.prim_func
-    def chunk_lse(  # pylint: disable=too-many-locals
+    def chunk_lse(
         var_A: T.handle,
         var_temperature: T.handle,
         var_chunked_sum: T.handle,
         var_chunked_max: T.handle,
     ):
-        T.func_attr({"tir.noalias": T.bool(True)})
+        T.func_attr({"tirx.noalias": T.bool(True)})
         batch_size = T.int64(is_size_var=True)
         vocab_size = T.int64(is_size_var=True)
         num_chunks = T.int64(is_size_var=True)
@@ -190,7 +189,7 @@ def _get_lse_and_softmax_func(  # pylint: disable=too-many-locals,too-many-state
         var_chunked_max: T.handle,
         var_softmax: T.handle,
     ):
-        T.func_attr({"tir.noalias": T.bool(True), "tir.is_scheduled": 1})
+        T.func_attr({"tirx.noalias": T.bool(True), "tirx.is_scheduled": 1})
         batch_size = T.int64(is_size_var=True)
         vocab_size = T.int64(is_size_var=True)
         num_chunks = T.int64(is_size_var=True)
@@ -246,7 +245,6 @@ def _get_lse_and_softmax_func(  # pylint: disable=too-many-locals,too-many-state
         TX = 32
         TY = max_threads // TX
         unroll_depth = 64
-        # pylint: enable=invalid-name
 
         sch.work_on("softmax_with_chunked_sum")
         l0, l1, l2 = sch.get_loops("log_pad")

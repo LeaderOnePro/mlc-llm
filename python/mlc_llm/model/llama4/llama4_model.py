@@ -3,15 +3,16 @@ Implementation for Llama4 architecture.
 """
 
 import dataclasses
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional  # noqa: UP035
 
 import tvm
-from tvm import te, tir
+from tvm import tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 from tvm.relax.frontend.nn.llm import position_embedding
 
 from mlc_llm import op as op_ext
+from mlc_llm.model.model_utils import index_last_token
 from mlc_llm.model.qwen3.qwen3_model import ACT2FN
 from mlc_llm.nn import PagedKVCache, RopeMode
 from mlc_llm.support import logging
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
-class Llama4TextConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
+class Llama4TextConfig(ConfigBase):
     """Configuration of the Text portion of the Llama model."""
 
     hidden_size: int
@@ -39,7 +40,7 @@ class Llama4TextConfig(ConfigBase):  # pylint: disable=too-many-instance-attribu
     hidden_act: str
     tie_word_embeddings: bool = False
     position_embedding_base: int = 0
-    rope_scaling: Optional[Dict[str, Any]] = None
+    rope_scaling: Optional[Dict[str, Any]] = None  # noqa: UP006
     num_key_value_heads: int = 0
     head_dim: int = 0
     attn_scale: float = 0.1
@@ -51,9 +52,9 @@ class Llama4TextConfig(ConfigBase):  # pylint: disable=too-many-instance-attribu
     no_rope_layer_interval: int = 4
     moe_layers: list[int] = None
 
-    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)  # noqa: UP006
 
-    def __post_init__(self):  # pylint: disable=too-many-branches
+    def __post_init__(self):
         if self.position_embedding_base == 0:
             if "rope_theta" in self.kwargs:
                 self.position_embedding_base = self.kwargs.pop("rope_theta")
@@ -63,9 +64,9 @@ class Llama4TextConfig(ConfigBase):  # pylint: disable=too-many-instance-attribu
             if "rope_type" not in self.rope_scaling:
                 self.rope_scaling = None
             else:
-                assert (
-                    self.rope_scaling["rope_type"] == "llama3"
-                ), f"Unsupported RoPE scaling type {self.rope_scaling['rope_type']} for Llama"
+                assert self.rope_scaling["rope_type"] == "llama3", (
+                    f"Unsupported RoPE scaling type {self.rope_scaling['rope_type']} for Llama"
+                )
 
         # Define which layers to avoid RoPE
         if self.no_rope_layers == []:
@@ -93,7 +94,7 @@ class Llama4TextConfig(ConfigBase):  # pylint: disable=too-many-instance-attribu
 
 
 @dataclasses.dataclass
-class Llama4Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
+class Llama4Config(ConfigBase):
     """Configuration of the Llama model."""
 
     text_config: Llama4TextConfig
@@ -106,10 +107,10 @@ class Llama4Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
     max_position_embeddings = 4096 * 32
     vocab_size: int = 202048
 
-    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
+    kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)  # noqa: UP006
 
     def __post_init__(self) -> None:
-        text_config_dict: Dict[str, Any]
+        text_config_dict: Dict[str, Any]  # noqa: UP006
         if isinstance(self.text_config, ConfigBase):
             text_config_dict = dataclasses.asdict(self.text_config)
         else:
@@ -118,7 +119,7 @@ class Llama4Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
         for k, v in text_config_dict.pop("kwargs", {}).items():
             text_config_dict[k] = v
 
-        self.text_config = Llama4TextConfig.from_dict(text_config_dict)  # type: ignore
+        self.text_config = Llama4TextConfig.from_dict(text_config_dict)
 
         if self.context_window_size == 0:
             # Fall back to max_position_embeddings
@@ -153,9 +154,6 @@ class Llama4Config(ConfigBase):  # pylint: disable=too-many-instance-attributes
                 min(self.context_window_size, 8192),
             )
             self.prefill_chunk_size = min(self.context_window_size, 8192)
-
-
-# pylint: disable=invalid-name,missing-docstring
 
 
 class Llama4TextMLP(nn.Module):
@@ -207,7 +205,7 @@ class Llama4TextL2Norm(nn.Module):
         return op.rms_norm(x, weight=weight, axes=[-1], epsilon=self.eps)
 
 
-class Llama4TextAttention(nn.Module):  # pylint: disable=too-many-instance-attributes
+class Llama4TextAttention(nn.Module):
     def __init__(self, config: Llama4Config, layer_idx):
         self.head_dim = config.text_config.head_dim
         self.attn_scale = config.text_config.attn_scale
@@ -261,7 +259,7 @@ class Llama4TextAttention(nn.Module):  # pylint: disable=too-many-instance-attri
         self.q_norm = Llama4TextL2Norm(self.rms_norm_eps, self.head_dim)
         self.k_norm = Llama4TextL2Norm(self.rms_norm_eps, self.head_dim)
 
-    def forward(  # pylint: disable=too-many-locals
+    def forward(
         self,
         hidden_states: Tensor,
         paged_kv_cache: PagedKVCache,
@@ -278,7 +276,7 @@ class Llama4TextAttention(nn.Module):  # pylint: disable=too-many-instance-attri
         if self.use_rope:
             qkv = op.concat([query_states, key_states, value_states], dim=2)
 
-            apply_rope = tvm.tir.IntImm("int64", 1)
+            apply_rope = tvm.tirx.IntImm("int64", 1)
 
             rotary_emb = position_embedding.llama4_rope_with_position_map(
                 theta=self.rope_theta,
@@ -542,7 +540,7 @@ class Llama4TextModel(nn.Module):
         return hidden_states
 
 
-class Llama4ForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attributes
+class Llama4ForCausalLM(nn.Module):
     def __init__(self, config: Llama4Config):
         self.text_config = config.text_config
         self.model = Llama4TextModel(config)
@@ -616,12 +614,8 @@ class Llama4ForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attribu
     def prefill(self, input_embed: Tensor, paged_kv_cache: PagedKVCache):
         op_ext.configure()
 
-        def _index(x: te.Tensor):
-            b, s, d = x.shape
-            return te.compute((b, 1, d), lambda i, _, k: x[i, s - 1, k], name="index")
-
         hidden_states = self.model(input_embed, paged_kv_cache)
-        hidden_states = op.tensor_expr_op(_index, name_hint="index", args=[hidden_states])
+        hidden_states = index_last_token(hidden_states)
         logits = self.get_logits(hidden_states)
         return logits, paged_kv_cache
 
@@ -679,13 +673,13 @@ class Llama4ForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attribu
         hidden_states = self.batch_forward_to_last_hidden_states(input_embeds, paged_kv_cache)
         return hidden_states, paged_kv_cache
 
-    def create_paged_kv_cache(  # pylint: disable=too-many-arguments
+    def create_paged_kv_cache(
         self,
-        max_batch_size: tir.Var,
-        max_total_seq_len: tir.Var,
-        prefill_chunk_size: tir.Var,
-        page_size: tir.Var,
-        support_sliding_window: tir.Var,
+        max_batch_size: tirx.Var,
+        max_total_seq_len: tirx.Var,
+        prefill_chunk_size: tirx.Var,
+        page_size: tirx.Var,
+        support_sliding_window: tirx.Var,
     ) -> PagedKVCache:
         return PagedKVCache.create_generic(
             attn_kind="mha",

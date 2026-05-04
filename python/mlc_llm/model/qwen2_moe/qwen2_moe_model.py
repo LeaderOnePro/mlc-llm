@@ -5,11 +5,12 @@ Implementation for QWEN2MOE architecture.
 import dataclasses
 from typing import Optional
 
-from tvm import te, tir
+from tvm import tirx
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
 
 from mlc_llm import op as op_ext
+from mlc_llm.model.model_utils import index_last_token
 from mlc_llm.model.qwen2.qwen2_model import ACT2FN, QWen2Attention, QWen2Config
 from mlc_llm.nn import PagedKVCache, RopeMode
 from mlc_llm.nn.expert import MixtralExperts
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
-class Qwen2MoeConfig(QWen2Config):  # pylint: disable=too-many-instance-attributes
+class Qwen2MoeConfig(QWen2Config):
     """Configuration of the Qwen2Moe model."""
 
     moe_intermediate_size: int = 0
@@ -29,9 +30,6 @@ class Qwen2MoeConfig(QWen2Config):  # pylint: disable=too-many-instance-attribut
     num_experts: int = 0
     decoder_sparse_step: int = 0
     norm_topk_prob: bool = False
-
-
-# pylint: disable=invalid-name,missing-docstring,too-many-locals
 
 
 class Qwen2MoeMLP(nn.Module):
@@ -53,7 +51,7 @@ class Qwen2MoeMLP(nn.Module):
         return self.down_proj(self.act_fn(x1) * x2)
 
 
-class Qwen2MoeSparseMoeBlock(nn.Module):  # pylint: disable=too-many-instance-attributes
+class Qwen2MoeSparseMoeBlock(nn.Module):
     """MoE layer for Qwen2MoE model."""
 
     def __init__(self, config: Qwen2MoeConfig):
@@ -142,9 +140,9 @@ class Qwen2MoeDecoderLayer(nn.Module):
     def __init__(self, config: Qwen2MoeConfig):
         super().__init__()
         self.self_attn = QWen2Attention(config)
-        assert (
-            config.num_experts > 0 and config.decoder_sparse_step == 1
-        ), "Currently only support use moe for every layer."
+        assert config.num_experts > 0 and config.decoder_sparse_step == 1, (
+            "Currently only support use moe for every layer."
+        )
         self.mlp = Qwen2MoeSparseMoeBlock(config)
         self.input_layernorm = nn.RMSNorm(config.hidden_size, -1, config.rms_norm_eps, bias=False)
         self.post_attention_layernorm = nn.RMSNorm(
@@ -221,7 +219,7 @@ class Qwen2MoeModel(nn.Module):
         return hidden_states
 
 
-class Qwen2MoeForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attributes
+class Qwen2MoeForCausalLM(nn.Module):
     def __init__(self, config: Qwen2MoeConfig):
         self.model = Qwen2MoeModel(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -266,12 +264,8 @@ class Qwen2MoeForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attri
     def prefill(self, input_embed: Tensor, paged_kv_cache: PagedKVCache):
         op_ext.configure()
 
-        def _index(x: te.Tensor):  # x[:-1,:]
-            b, s, d = x.shape
-            return te.compute((b, 1, d), lambda i, _, k: x[i, s - 1, k], name="index")
-
         hidden_states = self.model(input_embed, paged_kv_cache)
-        hidden_states = op.tensor_expr_op(_index, name_hint="index", args=[hidden_states])
+        hidden_states = index_last_token(hidden_states)
         logits = self.lm_head(hidden_states)
         if logits.dtype != "float32":
             logits = logits.astype("float32")
@@ -305,13 +299,13 @@ class Qwen2MoeForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attri
         logits = self.batch_forward(input_embeds, paged_kv_cache)
         return logits, paged_kv_cache
 
-    def create_paged_kv_cache(  # pylint: disable=too-many-arguments
+    def create_paged_kv_cache(
         self,
-        max_batch_size: tir.Var,
-        max_total_seq_len: tir.Var,
-        prefill_chunk_size: tir.Var,
-        page_size: tir.Var,
-        support_sliding_window: tir.Var,
+        max_batch_size: tirx.Var,
+        max_total_seq_len: tirx.Var,
+        prefill_chunk_size: tirx.Var,
+        page_size: tirx.Var,
+        support_sliding_window: tirx.Var,
     ) -> PagedKVCache:
         return PagedKVCache.create_generic(
             attn_kind="mha",

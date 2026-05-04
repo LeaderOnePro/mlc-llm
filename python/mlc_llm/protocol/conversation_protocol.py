@@ -1,7 +1,7 @@
 """The standard conversation protocol in MLC LLM"""
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar, Union  # noqa: UP035
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -44,29 +44,29 @@ class Conversation(BaseModel):
     system_message: str = ""
     # The system token ids to be prepended at the beginning of tokenized
     # generated prompt.
-    system_prefix_token_ids: Optional[List[int]] = None
+    system_prefix_token_ids: Optional[List[int]] = None  # noqa: UP006
     # Whether or not to append user role and separator after the system message.
     # This is mainly for [INST] [/INST] style prompt format
     add_role_after_system_message: bool = True
 
     # The conversation roles
-    roles: Dict[str, str]
+    roles: Dict[str, str]  # noqa: UP006
 
     # The roles prompt template, it optionally contains the defaults
     # message placeholders and will be replaced by actual content
-    role_templates: Dict[str, str]
+    role_templates: Dict[str, str]  # noqa: UP006
 
     # The conversation history messages.
     # Each message is a pair of strings, denoting "(role, content)".
     # The content can be None.
-    messages: List[Tuple[str, Optional[Union[str, List[Dict]]]]] = Field(default_factory=lambda: [])
+    messages: List[Tuple[str, Optional[Union[str, List[Dict]]]]] = Field(default_factory=lambda: [])  # noqa: UP006
 
     # The separators between messages when concatenating into a single prompt.
     # List size should be either 1 or 2.
     # - When size is 1, the separator will be used between adjacent messages.
     # - When size is 2, seps[0] is used after user message, and
     #   seps[1] is used after assistant message.
-    seps: List[str]
+    seps: List[str]  # noqa: UP006
 
     # The separator between the role and the content in a message.
     role_content_sep: str = ""
@@ -74,17 +74,24 @@ class Conversation(BaseModel):
     role_empty_sep: str = ""
 
     # The stop criteria
-    stop_str: List[str] = Field(default_factory=lambda: [])
-    stop_token_ids: List[int] = Field(default_factory=lambda: [])
+    stop_str: List[str] = Field(default_factory=lambda: [])  # noqa: UP006
+    stop_token_ids: List[int] = Field(default_factory=lambda: [])  # noqa: UP006
+
+    # When True, strip `<think>...</think>` blocks (and any trailing whitespace)
+    # from historical assistant messages before rendering the prompt, mirroring
+    # Qwen3's official HF chat template. Only historical turns before the last
+    # user message are affected; reasoning on the most recent assistant turn is
+    # preserved for tool-call prefill scenarios.
+    strip_reasoning_in_history: bool = False
 
     # Function call fields
     function_string: str = ""
     # whether using function calling or not, helps check for output message format in API call
     use_function_calling: bool = False
 
-    def __init__(self, role_templates: Optional[Dict[str, str]] = None, **kwargs):
+    def __init__(self, role_templates: Optional[Dict[str, str]] = None, **kwargs):  # noqa: UP006
         # Defaults templates which would be overridden by model specific templates
-        _role_templates: Dict[str, str] = {
+        _role_templates: Dict[str, str] = {  # noqa: UP006
             "user": MessagePlaceholders.USER.value,
             "assistant": MessagePlaceholders.ASSISTANT.value,
             "tool": MessagePlaceholders.TOOL.value,
@@ -95,23 +102,22 @@ class Conversation(BaseModel):
 
     @field_validator("seps")
     @classmethod
-    def check_message_seps(cls, seps: List[str]) -> List[str]:
+    def check_message_seps(cls, seps: List[str]) -> List[str]:  # noqa: UP006
         """Check if the input message separators has size 1 or 2."""
         if len(seps) == 0 or len(seps) > 2:
             raise ValueError("seps should have size 1 or 2.")
         return seps
 
-    def to_json_dict(self) -> Dict[str, Any]:
+    def to_json_dict(self) -> Dict[str, Any]:  # noqa: UP006
         """Convert to a json dictionary"""
         return self.model_dump(by_alias=True, exclude_none=True)
 
     @classmethod
-    def from_json_dict(cls: Type[T], json_dict: Dict[str, Any]) -> T:
+    def from_json_dict(cls: Type[T], json_dict: Dict[str, Any]) -> T:  # noqa: UP006
         """Convert from a json dictionary"""
         return Conversation.model_validate(json_dict)
 
-    # pylint: disable=too-many-branches
-    def as_prompt(self, config=None) -> List[Any]:
+    def as_prompt(self, config=None) -> List[Any]:  # noqa: UP006
         """Convert the conversation template and history messages to
         a single prompt.
 
@@ -121,7 +127,7 @@ class Conversation(BaseModel):
             The prompts converted from the conversation messages.
             We use Any in the signature to avoid cyclic import.
         """
-        from ..serve import data  # pylint: disable=import-outside-toplevel
+        from ..serve import data
 
         # - Get the system message.
         system_msg = self.system_template.replace(
@@ -129,7 +135,7 @@ class Conversation(BaseModel):
         )
 
         # - Get the message strings.
-        message_list: List[Union[str, data.Data]] = []
+        message_list: List[Union[str, data.Data]] = []  # noqa: UP006
         separators = list(self.seps)
         if len(separators) == 1:
             separators.append(separators[0])
@@ -137,7 +143,13 @@ class Conversation(BaseModel):
         if system_msg != "":
             message_list.append(system_msg)
 
-        for i, (role, content) in enumerate(self.messages):  # pylint: disable=not-an-iterable
+        messages = (
+            _strip_reasoning_in_history(self.messages)
+            if self.strip_reasoning_in_history
+            else self.messages
+        )
+
+        for i, (role, content) in enumerate(messages):
             if role not in self.roles.keys():
                 raise ValueError(f'Role "{role}" is not a supported role in {self.roles.keys()}')
             separator = separators[role == "assistant"]  # check assistant role
@@ -196,15 +208,15 @@ class Conversation(BaseModel):
         return prompt
 
 
-def _get_url_from_item(item: Dict) -> str:
+def _get_url_from_item(item: Dict) -> str:  # noqa: UP006
     image_url: str
     assert "image_url" in item, "Content item should have an image_url field"
     if isinstance(item["image_url"], str):
         image_url = item["image_url"]
     elif isinstance(item["image_url"], dict):
-        assert (
-            "url" in item["image_url"]
-        ), "Content image_url item should be a string or a dict with a url field"  # pylint: disable=line-too-long
+        assert "url" in item["image_url"], (
+            "Content image_url item should be a string or a dict with a url field"
+        )
         image_url = item["image_url"]["url"]
     else:
         raise ValueError(
@@ -214,7 +226,33 @@ def _get_url_from_item(item: Dict) -> str:
     return image_url
 
 
-def _combine_consecutive_messages(messages: List[Any]) -> List[Any]:
+def _strip_reasoning_in_history(
+    messages: List[Tuple[str, Optional[Union[str, List[Dict]]]]],  # noqa: UP006
+) -> List[Tuple[str, Optional[Union[str, List[Dict]]]]]:  # noqa: UP006
+    """Strip `<think>...</think>` blocks from assistant messages that precede
+    the last user message, matching Qwen3's HF chat-template behavior. The last
+    assistant message (if any) is preserved so tool-call prefill continuations
+    keep their reasoning context.
+    """
+    last_user_idx = -1
+    for i, (role, _) in enumerate(messages):
+        if role == "user":
+            last_user_idx = i
+
+    result: List[Tuple[str, Optional[Union[str, List[Dict]]]]] = []  # noqa: UP006
+    for i, (role, content) in enumerate(messages):
+        if (
+            role == "assistant"
+            and i < last_user_idx
+            and isinstance(content, str)
+            and "</think>" in content
+        ):
+            content = content.split("</think>")[-1].lstrip("\n")
+        result.append((role, content))
+    return result
+
+
+def _combine_consecutive_messages(messages: List[Any]) -> List[Any]:  # noqa: UP006
     """Combining consecutive strings into one.
 
     Parameters

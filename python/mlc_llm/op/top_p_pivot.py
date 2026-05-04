@@ -1,13 +1,11 @@
 """Operators for choosing the pivot to cut-off top-p percentile"""
 
 import tvm
-from tvm.script import tir as T
+from tvm.script import tirx as T
 
 from mlc_llm.support.max_thread_check import get_max_num_threads_per_block
 
 # mypy: disable-error-code="attr-defined,valid-type,name-defined"
-# pylint: disable=too-many-locals,invalid-name,too-many-arguments,unnecessary-lambda
-# pylint: disable=too-many-statements,line-too-long,too-many-nested-blocks,too-many-branches
 
 
 def top_p_pivot(pN, target: tvm.target.Target):
@@ -48,7 +46,7 @@ def top_p_pivot(pN, target: tvm.target.Target):
         return T.sblock_alloc_buffer((1,), dtype, scope="local")
 
     def valid(lsum, lmin, cmin, top_p):
-        return tvm.tir.all(lsum >= top_p, top_p > lsum - cmin * lmin)
+        return tvm.tirx.all(lsum >= top_p, top_p > lsum - cmin * lmin)
 
     # fmt: off
     @T.prim_func(private=True)
@@ -59,7 +57,7 @@ def top_p_pivot(pN, target: tvm.target.Target):
         var_final_pivot: T.handle,
         var_final_lsum: T.handle,
     ):
-        T.func_attr({"tir.is_scheduled": 1, "tir.noalias": True})
+        T.func_attr({"tirx.is_scheduled": 1, "tirx.noalias": True})
         B = T.int32(is_size_var=True)
         N = T.int32(is_size_var=True)
         prob = T.match_buffer(var_prob, (B, N,), "float32")
@@ -164,7 +162,7 @@ def top_p_pivot(pN, target: tvm.target.Target):
                                             "reduce_scope",
                                             T.reinterpret("handle", T.uint64(0)),
                                         )
-                                        T.tvm_thread_allreduce(T.uint32(1), total_sum[0], True, total_sum_reduce[0], tx, dtype="handle")
+                                        T.tvm_thread_allreduce(T.uint32(1), total_sum[0], True, total_sum_reduce[0], tx, dtype="handle")  # noqa: E501
                                     # T.tvm_storage_sync("shared")
 
                                     if tx == 0:
@@ -186,18 +184,18 @@ def top_p_pivot(pN, target: tvm.target.Target):
                                         "reduce_scope",
                                         T.reinterpret("handle", T.uint64(0)),
                                     )
-                                    T.tvm_thread_allreduce(T.uint32(1), lsum[pidx], True, lsum_reduce[0], tx, dtype="handle")
+                                    T.tvm_thread_allreduce(T.uint32(1), lsum[pidx], True, lsum_reduce[0], tx, dtype="handle")  # noqa: E501
 
                                 # reduce lmin over tx for pivot[j]
                                 with T.sblock("block_cross_thread"):
                                     T.reads(lmin[pidx])
                                     T.writes(lmin_reduce[0])
                                     T.attr(
-                                        T.comm_reducer(lambda x0, y0: T.min(x0, y0), [T.float32(0)]),
+                                        T.comm_reducer(lambda x0, y0: T.min(x0, y0), [T.float32(0)]),  # noqa: E501
                                         "reduce_scope",
                                         T.reinterpret("handle", T.uint64(0)),
                                     )
-                                    T.tvm_thread_allreduce(T.uint32(1), lmin[pidx], True, lmin_reduce[0], tx, dtype="handle")
+                                    T.tvm_thread_allreduce(T.uint32(1), lmin[pidx], True, lmin_reduce[0], tx, dtype="handle")  # noqa: E501
 
                                 if tx == 0:
                                     # broadcast lmin to all threads
@@ -220,7 +218,7 @@ def top_p_pivot(pN, target: tvm.target.Target):
                                         "reduce_scope",
                                         T.reinterpret("handle", T.uint64(0)),
                                     )
-                                    T.tvm_thread_allreduce(T.uint32(1), cmin[pidx], True, cmin_reduce[0], tx, dtype="handle")
+                                    T.tvm_thread_allreduce(T.uint32(1), cmin[pidx], True, cmin_reduce[0], tx, dtype="handle")  # noqa: E501
 
                                 if tx == 0:
                                     # only the leader thread updates cmin
@@ -254,7 +252,7 @@ def top_p_pivot(pN, target: tvm.target.Target):
                             # new pivots for next iteration
                             # uniform spacing between L and R
                             for pidx in T.unroll(0, pN):
-                                pivot[pidx] = L[0] - (pidx + 1) * (L_local[0] - R_local[0]) / (pN + 1)
+                                pivot[pidx] = L[0] - (pidx + 1) * (L_local[0] - R_local[0]) / (pN + 1)  # noqa: E501
 
                         if tx == 0:
                             # leader thread writes back the pivot
@@ -306,7 +304,7 @@ def top_p_renorm(target: tvm.target.Target = None):
         var_final_lsum: T.handle,
         var_renorm_prob: T.handle,
     ):
-        T.func_attr({"tir.is_scheduled": 1, "tir.noalias": True})
+        T.func_attr({"tirx.is_scheduled": 1, "tirx.noalias": True})
         B = T.int32(is_size_var=True)
         N = T.int32(is_size_var=True)
         prob = T.match_buffer(var_prob, (B, N,), "float32")
@@ -331,7 +329,7 @@ def top_p_renorm(target: tvm.target.Target = None):
                             for i in T.serial(T.ceildiv(N, BX * TX)):
                                 idx = T.meta_var(i * BX * TX + bx * TX + tx)
                                 if idx < N:
-                                    renorm_prob[by, idx] = T.if_then_else(prob[by, idx] >= pivot[0], prob[by, idx] / lsum[0], 0.0)
+                                    renorm_prob[by, idx] = T.if_then_else(prob[by, idx] >= pivot[0], prob[by, idx] / lsum[0], 0.0)  # noqa: E501
     # fmt: on
 
     return _func

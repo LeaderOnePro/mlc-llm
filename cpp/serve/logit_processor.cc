@@ -7,11 +7,13 @@
 
 #include <tvm/ffi/function.h>
 #include <tvm/runtime/device_api.h>
-#include <tvm/runtime/nvtx.h>
+#include <tvm/support/cuda/nvtx.h>
 
 namespace mlc {
 namespace llm {
 namespace serve {
+
+using tvm::support::NVTXScopedRange;
 
 inline void CopyArray(Tensor src, Tensor dst, TVMStreamHandle copy_stream) {
   DLTensor dl_dst = *(dst.operator->());
@@ -105,7 +107,7 @@ class LogitProcessorImpl : public LogitProcessorObj {
     NVTXScopedRange nvtx_scope("Logit inplace update");
     TVM_FFI_ICHECK_EQ(logits->ndim, 2);
     TVM_FFI_ICHECK_EQ(logits->shape[1], vocab_size_);
-    TVM_FFI_ICHECK(logits.DataType() == DataType::Float(32));
+    TVM_FFI_ICHECK(logits.DataType() == (DLDataType{kDLFloat, 32, 1}));
     TVM_FFI_ICHECK_EQ(generation_cfg.size(), mstates.size());
     TVM_FFI_ICHECK_LE(logits->shape[0], max_num_token_);
     int num_total_token = logits->shape[0];
@@ -157,7 +159,7 @@ class LogitProcessorImpl : public LogitProcessorObj {
     TVM_FFI_ICHECK_EQ(logits->ndim, 2);
     TVM_FFI_ICHECK_LE(logits->shape[0], max_num_token_);
     TVM_FFI_ICHECK_EQ(logits->shape[1], vocab_size_);
-    TVM_FFI_ICHECK(logits.DataType() == DataType::Float(32));
+    TVM_FFI_ICHECK(logits.DataType() == (DLDataType{kDLFloat, 32, 1}));
     int num_total_token = logits->shape[0];
     int num_sequence = generation_cfg.size();
 
@@ -459,9 +461,9 @@ class LogitProcessorImpl : public LogitProcessorObj {
   const int max_num_token_;
   const int vocab_size_;
   const int bitmask_size_;
-  const DLDataType dtype_i32_ = DataType::Int(32);
-  const DLDataType dtype_u32_ = DataType::UInt(32);
-  const DLDataType dtype_f32_ = DataType::Float(32);
+  const DLDataType dtype_i32_ = DLDataType{kDLInt, 32, 1};
+  const DLDataType dtype_u32_ = DLDataType{kDLUInt, 32, 1};
+  const DLDataType dtype_f32_ = DLDataType{kDLFloat, 32, 1};
   // Packed functions.
   Device device_;
   Function softmax_func_;

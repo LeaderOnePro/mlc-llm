@@ -42,6 +42,8 @@ class Conversation(BaseModel):
     system_template: str = MessagePlaceholders.SYSTEM.value
     # The content of the system prompt (without the template format).
     system_message: str = ""
+    # Whether the system template is rendered when the system message is empty.
+    render_empty_system_message: bool = True
     # The system token ids to be prepended at the beginning of tokenized
     # generated prompt.
     system_prefix_token_ids: Optional[List[int]] = None  # noqa: UP006
@@ -130,8 +132,10 @@ class Conversation(BaseModel):
         from ..serve import data
 
         # - Get the system message.
-        system_msg = self.system_template.replace(
-            MessagePlaceholders.SYSTEM.value, self.system_message
+        system_msg = (
+            self.system_template.replace(MessagePlaceholders.SYSTEM.value, self.system_message)
+            if self.system_message or self.render_empty_system_message
+            else ""
         )
 
         # - Get the message strings.
@@ -188,8 +192,22 @@ class Conversation(BaseModel):
                 elif item["type"] == "image_url":
                     assert config is not None, "Model config is required"
                     image_url = _get_url_from_item(item)
-                    message_list.append(data.ImageData.from_url(image_url, config))
-                    message_list.append("\n")
+                    model_type = config.get("model_type", "") if config else ""
+                    if model_type == "gemma3_v":
+                        # Wrap with \n BOI [img embeds] EOI for Gemma 3 Vision
+                        model_cfg = config["model_config"]
+                        message_list.append("\n")
+                        message_list.append(data.TokenData([model_cfg["boi_token_index"]]))
+                        message_list.append(data.ImageData.from_url(image_url, config))
+                        message_list.append(data.TokenData([model_cfg["eoi_token_index"]]))
+                    elif model_type == "qwen3_5_vision":
+                        model_cfg = config["model_config"]
+                        message_list.append(data.TokenData([model_cfg["vision_start_token_id"]]))
+                        message_list.append(data.ImageData.from_url(image_url, config))
+                        message_list.append(data.TokenData([model_cfg["vision_end_token_id"]]))
+                    else:
+                        message_list.append(data.ImageData.from_url(image_url, config))
+                        message_list.append("\n")
                 else:
                     raise ValueError(f"Unsupported content type: {item['type']}")
 

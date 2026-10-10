@@ -6,6 +6,7 @@ from typing import Any, Literal, Optional, Tuple  # noqa: UP035
 import tvm
 from tvm import DataType, DataTypeCode, te, tirx
 from tvm.relax.frontend import nn
+from tvm.script import s_tir as Ts
 from tvm.script import tirx as T
 
 from mlc_llm.loader import QuantizeMapping
@@ -794,29 +795,29 @@ def dequantize_float8_groupwise_scaled_gemv(
             model_dtype
         )
 
-    @T.prim_func(private=True, s_tir=True)
+    @Ts.prim_func(private=True)
     def _func(
-        x: T.Buffer((1, k), model_dtype),
-        w: T.Buffer((n, k), quantize_dtype),
-        w_scale: T.Buffer(
+        x: T.Tensor((1, k), model_dtype),
+        w: T.Tensor((n, k), quantize_dtype),
+        w_scale: T.Tensor(
             (
                 (n + block_size[0] - 1) // block_size[0],
                 (k + block_size[1] - 1) // block_size[1],
             ),
             "float32",
         ),
-        o: T.Buffer((n,), out_dtype),
+        o: T.Tensor((n,), out_dtype),
     ):
         T.func_attr({"op_pattern": 4, "tirx.noalias": True})  # kOutEWiseFusable
-        y = T.sblock_alloc_buffer((n, k), model_dtype)
+        y = Ts.sblock_alloc_buffer((n, k), model_dtype)
         for i1, i2 in T.grid(n, k):
-            with T.sblock("dequantize"):
-                i, j = T.axis.remap("SS", [i1, i2])
+            with Ts.sblock("dequantize"):
+                i, j = Ts.axis.remap("SS", [i1, i2])
                 y[i, j] = _dequantize(w, w_scale, i, j)
         for i1, i2 in T.grid(n, k):
-            with T.sblock("gemv"):
-                i, j = T.axis.remap("SR", [i1, i2])
-                with T.init():
+            with Ts.sblock("gemv"):
+                i, j = Ts.axis.remap("SR", [i1, i2])
+                with Ts.init():
                     o[i] = T.cast(T.float16(0), out_dtype)
                 o[i] += (x[0, j] * y[i, j]).astype(out_dtype)
 

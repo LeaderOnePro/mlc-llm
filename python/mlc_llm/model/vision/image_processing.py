@@ -4,11 +4,12 @@ Implements the CLIP Image processor.
 
 from tvm import s_tir, tirx
 from tvm.relax.frontend.nn import Module, Tensor, op
+from tvm.script import s_tir as Ts
 from tvm.script import tirx as T
 
 
 def _var(dtype, size=1):
-    return T.sblock_alloc_buffer((size,), dtype, scope="local")
+    return Ts.sblock_alloc_buffer((size,), dtype, scope="local")
 
 
 class ImageProcessor(Module):
@@ -94,27 +95,33 @@ class ImageProcessor(Module):
         assert 3 == image.shape[1], "image layout should be NCHW"
 
         def create_crop_func(dtype):  # , top, bottom, left, right):
-            @T.prim_func(s_tir=True)
+            n = T.dynamic("n", "int64")
+            c = T.dynamic("c", "int64")
+            h = T.dynamic("h", "int64")
+            w = T.dynamic("w", "int64")
+            top = T.dynamic("top", "int64")
+            bottom = T.dynamic("bottom", "int64")
+            left = T.dynamic("left", "int64")
+            right = T.dynamic("right", "int64")
+
+            @Ts.prim_func
             def crop_func(
-                image: T.handle,
+                image_buf: T.Tensor((n, c, h, w), dtype),
                 top: T.int64(),
                 bottom: T.int64(),
                 left: T.int64(),
                 right: T.int64(),
-                out: T.handle,
+                out_buf: T.Tensor((n, c, bottom - top, right - left), dtype),
             ):
                 T.func_attr({"op_pattern": 8, "tirx.noalias": True, "tirx.is_scheduled": 1})
-                n, c, h, w = T.int64(), T.int64(), T.int64(), T.int64()
-                image_buf = T.match_buffer(image, (n, c, h, w), dtype=dtype)
-                out_buf = T.match_buffer(out, (n, c, bottom - top, right - left), dtype=dtype)
                 out_h = bottom - top
                 out_w = right - left
                 for n_idx in T.thread_binding(n, thread="blockIdx.x"):
                     for c_idx in T.thread_binding(c, thread="blockIdx.y"):
                         for h_idx, w_idx in T.grid(out_h, out_w):
-                            with T.sblock("crop"):
-                                T.writes(out_buf[n_idx, c_idx, h_idx, w_idx])
-                                T.reads(image_buf[n_idx, c_idx, h_idx + top, w_idx + left])
+                            with Ts.sblock("crop"):
+                                Ts.writes(out_buf[n_idx, c_idx, h_idx, w_idx])
+                                Ts.reads(image_buf[n_idx, c_idx, h_idx + top, w_idx + left])
                                 if (h_idx + T.int64(top)) < h and (w_idx + T.int64(left)) < w:
                                     out_buf[n_idx, c_idx, h_idx, w_idx] = image_buf[
                                         n_idx, c_idx, h_idx + top, w_idx + left
@@ -147,19 +154,24 @@ class ImageProcessor(Module):
         assert 3 == image.shape[1], "image layout should be NCHW"
 
         def create_rescale_func(rescale_factor, dtype, o_dtype):
-            @T.prim_func(s_tir=True)
-            def rescale_func(image: T.handle, out: T.handle):
+            n = T.dynamic("n", "int64")
+            c = T.dynamic("c", "int64")
+            h = T.dynamic("h", "int64")
+            w = T.dynamic("w", "int64")
+
+            @Ts.prim_func
+            def rescale_func(
+                image_buf: T.Tensor((n, c, h, w), dtype),
+                out_buf: T.Tensor((n, c, h, w), o_dtype),
+            ):
                 T.func_attr({"op_pattern": 8, "tirx.noalias": True, "tirx.is_scheduled": 1})
-                n, c, h, w = T.int64(), T.int64(), T.int64(), T.int64()
-                image_buf = T.match_buffer(image, (n, c, h, w), dtype=dtype)
-                out_buf = T.match_buffer(out, (n, c, h, w), dtype=o_dtype)
 
                 for n_idx in T.thread_binding(n, thread="blockIdx.x"):
                     for c_idx in T.thread_binding(c, thread="blockIdx.y"):
                         for h_idx, w_idx in T.grid(h, w):
-                            with T.sblock("rescale"):
-                                T.reads(image_buf[n_idx, c_idx, h_idx, w_idx])
-                                T.writes(out_buf[n_idx, c_idx, h_idx, w_idx])
+                            with Ts.sblock("rescale"):
+                                Ts.reads(image_buf[n_idx, c_idx, h_idx, w_idx])
+                                Ts.writes(out_buf[n_idx, c_idx, h_idx, w_idx])
                                 if h_idx < h and w_idx < w:
                                     out_buf[n_idx, c_idx, h_idx, w_idx] = (
                                         T.cast(
@@ -181,36 +193,41 @@ class ImageProcessor(Module):
         )
         return out
 
-    def normalize(self, image: Tensor, o_dtype="float32"):
+    def _normalize_impl(self, image: Tensor, mean, std, name, o_dtype="float32"):
         assert 4 == image.ndim, "image should be 4D data tensor"
         assert 3 == image.shape[1], "image layout should be NCHW"
 
-        def create_normalize_func(dtype, o_dtype):
-            @T.prim_func(s_tir=True)
-            def normalize_func(image: T.handle, out: T.handle):
-                n, c, h, w = T.int64(), T.int64(), T.int64(), T.int64()
-                image_buf = T.match_buffer(image, (n, c, h, w), dtype=dtype)
-                out_buf = T.match_buffer(out, (n, c, h, w), dtype=o_dtype)
+        def create_normalize_func(mean_vals, std_vals, dtype, o_dtype):
+            n = T.dynamic("n", "int64")
+            c = T.dynamic("c", "int64")
+            h = T.dynamic("h", "int64")
+            w = T.dynamic("w", "int64")
+
+            @Ts.prim_func
+            def normalize_func(
+                image_buf: T.Tensor((n, c, h, w), dtype),
+                out_buf: T.Tensor((n, c, h, w), o_dtype),
+            ):
                 mean = _var(o_dtype, 3)
                 stddev = _var(o_dtype, 3)
 
                 for n_idx in T.thread_binding(n, thread="blockIdx.x"):
                     for c_idx in T.thread_binding(c, thread="blockIdx.y"):
                         for h_idx, w_idx in T.grid(h, w):
-                            with T.sblock("normalize"):
-                                T.reads(
+                            with Ts.sblock("normalize"):
+                                Ts.reads(
                                     image_buf[n_idx, c_idx, h_idx, w_idx],
                                     mean[c_idx],
                                     stddev[c_idx],
                                 )
-                                T.writes(out_buf[n_idx, c_idx, h_idx, w_idx])
-                                with T.init():
-                                    mean[0] = 0.48145466
-                                    stddev[0] = 0.26862954
-                                    mean[1] = 0.4578275
-                                    stddev[1] = 0.26130258
-                                    mean[2] = 0.40821073
-                                    stddev[2] = 0.27577711
+                                Ts.writes(out_buf[n_idx, c_idx, h_idx, w_idx])
+                                with Ts.init():
+                                    mean[0] = mean_vals[0]
+                                    stddev[0] = std_vals[0]
+                                    mean[1] = mean_vals[1]
+                                    stddev[1] = std_vals[1]
+                                    mean[2] = mean_vals[2]
+                                    stddev[2] = std_vals[2]
                                 if h_idx < h and w_idx < w:
                                     out_buf[n_idx, c_idx, h_idx, w_idx] = (
                                         T.cast(
@@ -225,33 +242,61 @@ class ImageProcessor(Module):
             return sch.mod["main"].with_attr("tirx.is_scheduled", 1)
 
         out = op.tensor_ir_op(
-            create_normalize_func(image.dtype, o_dtype),
-            "normalize",
+            create_normalize_func(mean, std, image.dtype, o_dtype),
+            name,
             [image],
             [Tensor.placeholder(image.shape, o_dtype)],
         )
         return out
+
+    def normalize(self, image: Tensor, o_dtype="float32"):
+        return self._normalize_impl(
+            image,
+            mean=[0.48145466, 0.4578275, 0.40821073],
+            std=[0.26862954, 0.26130258, 0.27577711],
+            name="normalize",
+            o_dtype=o_dtype,
+        )
+
+    def normalize_siglip(self, image: Tensor, o_dtype="float32"):
+        """Normalize with SigLIP values: mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]"""
+        return self._normalize_impl(
+            image,
+            mean=[0.5, 0.5, 0.5],
+            std=[0.5, 0.5, 0.5],
+            name="normalize_siglip",
+            o_dtype=o_dtype,
+        )
 
     def pad(self, image: Tensor, dtype="uint8"):
         assert 4 == image.ndim, "image should be 4D data tensor"
         assert 3 == image.shape[1], "image layout should be NCHW"
 
         def create_pad_func(left, right, fill=255):
-            @T.prim_func(s_tir=True)
-            def pad_func(image: T.handle, t: T.int64(), b: T.int64(), out: T.handle):
+            n = T.dynamic("n", "int64")
+            c = T.dynamic("c", "int64")
+            h = T.dynamic("h", "int64")
+            w = T.dynamic("w", "int64")
+            t = T.dynamic("t", "int64")
+            b = T.dynamic("b", "int64")
+
+            @Ts.prim_func
+            def pad_func(
+                image_buf: T.Tensor((n, c, h, w), dtype),
+                t: T.int64(),
+                b: T.int64(),
+                out_buf: T.Tensor((n, c, h + t + b, w + left + right), dtype),
+            ):
                 T.func_attr({"op_pattern": 8, "tirx.noalias": True, "tirx.is_scheduled": 1})
-                n, c, h, w = T.int64(), T.int64(), T.int64(), T.int64()
-                image_buf = T.match_buffer(image, (n, c, h, w), dtype=dtype)
-                out_buf = T.match_buffer(out, (n, c, h + t + b, w + left + right), dtype=dtype)
                 out_h = h + t + b
                 out_w = w + left + right
 
                 for n_idx in T.thread_binding(n, thread="blockIdx.x"):
                     for c_idx in T.thread_binding(c, thread="blockIdx.y"):
                         for h_idx, w_idx in T.grid(out_h, out_w):
-                            with T.sblock("pad"):
-                                T.reads(image_buf[n_idx, c_idx, h_idx, w_idx])
-                                T.writes(out_buf[n_idx, c_idx, h_idx, w_idx])
+                            with Ts.sblock("pad"):
+                                Ts.reads(image_buf[n_idx, c_idx, h_idx, w_idx])
+                                Ts.writes(out_buf[n_idx, c_idx, h_idx, w_idx])
                                 if h_idx < t or h_idx > h + b or w_idx < left or w_idx > w + right:
                                     out_buf[n_idx, c_idx, h_idx, w_idx] = fill
                                 else:

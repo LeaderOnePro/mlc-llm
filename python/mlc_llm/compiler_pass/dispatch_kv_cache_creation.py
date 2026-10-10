@@ -26,19 +26,19 @@ def extract_creation_args(func: relax.Function) -> Dict[str, Any]:  # noqa: UP00
     assert call_args[0].global_symbol == "mlc.create_paged_kv_cache_generic"
     args = call_args[1:]
     assert len(args) == 18
-    assert isinstance(args[0], (relax.StringImm, relax.Tuple))
+    assert isinstance(args[0], (tvm.ir.StringImm, relax.Tuple))
     # Check if attn_kind is a single value or a list with length of hidden layers
-    if isinstance(args[0], relax.StringImm):
+    if isinstance(args[0], tvm.ir.StringImm):
         assert args[0].value in ["mha", "mla"]
         attn_kind = args[0].value
     else:
         assert len(args[0].fields) == args[3].value
         for i, attention_type in enumerate(args[0].fields):
-            assert isinstance(attention_type, relax.StringImm)
+            assert isinstance(attention_type, tvm.ir.StringImm)
             assert attention_type.value in ["mha", "mla", "mha_sliding"]
         attn_kind = [args[0].fields[i].value for i in range(len(args[0]))]
     assert isinstance(args[1], relax.ShapeExpr)
-    assert len(args[1].values) == 5
+    assert len(args[1].values) in (5, 6)
     assert isinstance(args[2], relax.ShapeExpr)
     for i in range(3, 18):
         if i in [13, 14, 17]:
@@ -48,9 +48,9 @@ def extract_creation_args(func: relax.Function) -> Dict[str, Any]:  # noqa: UP00
         assert isinstance(args[i], (tvm.tirx.IntImm, tvm.tirx.FloatImm)), (
             f"args[{i}] is {type(args[i])}"
         )
-    assert isinstance(args[13], relax.StringImm)
-    assert isinstance(args[16], (relax.Constant, tvm.tirx.IntImm, tvm.tirx.FloatImm))
-    assert isinstance(args[17], relax.DataTypeImm)
+    assert isinstance(args[13], tvm.ir.StringImm)
+    assert isinstance(args[16], (tvm.ir.DataTypeImm, tvm.tirx.IntImm, tvm.tirx.FloatImm))
+    assert isinstance(args[17], tvm.ir.DataTypeImm)
 
     return {
         "attn_kind": attn_kind,
@@ -59,6 +59,9 @@ def extract_creation_args(func: relax.Function) -> Dict[str, Any]:  # noqa: UP00
         "prefill_chunk_size": args[1].values[2],
         "page_size": args[1].values[3],
         "support_sliding_window": args[1].values[4],
+        "layer_sliding_window_size": (
+            args[1].values[5].value if len(args[1].values) == 6 else 1024
+        ),
         "layer_partition": args[2],
         "num_hidden_layers": args[3].value,
         "num_attention_heads": args[4].value,

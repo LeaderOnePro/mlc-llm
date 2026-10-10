@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Literal, Optional, Tuple  # noqa: UP035
 from tvm.relax.frontend import nn
 
 from mlc_llm.loader import ExternMapping, QuantizeMapping
+from mlc_llm.protocol.artifact_manifest import ArtifactDefinition
 from mlc_llm.quantization import make_quantization_functions
 from mlc_llm.quantization.quantization import Quantization
 
@@ -18,7 +19,8 @@ from .deepseek_v2 import deepseek_v2_loader, deepseek_v2_model
 from .eagle import eagle_loader, eagle_model
 from .gemma import gemma_loader, gemma_model
 from .gemma2 import gemma2_loader, gemma2_model
-from .gemma3 import gemma3_loader, gemma3_model
+from .gemma3 import gemma3_loader, gemma3_model, gemma3v_loader, gemma3v_model
+from .gemma4 import gemma4_loader, gemma4_model
 from .gpt2 import gpt2_loader, gpt2_model
 from .gpt_bigcode import gpt_bigcode_loader, gpt_bigcode_model
 from .gpt_j import gpt_j_loader, gpt_j_model
@@ -45,7 +47,7 @@ from .qwen2 import qwen2_loader, qwen2_model
 from .qwen2_moe import qwen2_moe_loader, qwen2_moe_model
 from .qwen3 import qwen3_loader, qwen3_model
 from .qwen3_moe import qwen3_moe_loader, qwen3_moe_model
-from .qwen35 import qwen35_loader, qwen35_model
+from .qwen35 import qwen35_loader, qwen35_model, qwen35v_loader, qwen35v_model
 from .rwkv5 import rwkv5_loader, rwkv5_model
 from .rwkv6 import rwkv6_loader, rwkv6_model
 from .stable_lm import stablelm_loader, stablelm_model
@@ -111,6 +113,12 @@ class Model:
 
     embedding_metadata: Optional[EmbeddingMetadata] = None
         Metadata for the embedding model. Default to None.
+
+    artifact: Optional[ArtifactDefinition] = None
+        Optional model-package/compiled-program contract. Legacy models leave this unset.
+
+    supports_flashinfer: bool = True
+        Whether this architecture can use the FlashInfer KV-cache implementation.
     """
 
     name: str
@@ -121,6 +129,8 @@ class Model:
 
     model_task: Literal["chat", "embedding"] = "chat"
     embedding_metadata: Optional[EmbeddingMetadata] = None
+    artifact: Optional[ArtifactDefinition] = None
+    supports_flashinfer: bool = True
 
     def __post_init__(self):
         if self.model_task == "embedding" and self.embedding_metadata is None:
@@ -237,6 +247,35 @@ MODELS: Dict[str, Model] = {  # noqa: UP006
             gemma3_model.Gemma3ForCausalLM,
             supports_ft_quant=False,
         ),
+    ),
+    "gemma4": Model(
+        name="gemma4",
+        model=gemma4_model.Gemma4ForConditionalGeneration,
+        config=gemma4_model.Gemma4Config,
+        source={
+            "huggingface-torch": gemma4_loader.huggingface,
+            "huggingface-safetensor": gemma4_loader.huggingface,
+        },
+        quantize=make_quantization_functions(
+            gemma4_model.Gemma4ForConditionalGeneration,
+            supports_ft_quant=False,
+        ),
+        artifact=gemma4_model.GEMMA4_ARTIFACT,
+        supports_flashinfer=False,
+    ),
+    "gemma3_v": Model(
+        name="gemma3_v",
+        model=gemma3v_model.Gemma3VForCausalLM,
+        config=gemma3v_model.Gemma3VConfig,
+        source={
+            "huggingface-torch": gemma3v_loader.huggingface,
+            "huggingface-safetensor": gemma3v_loader.huggingface,
+        },
+        quantize=make_quantization_functions(
+            gemma3v_model.Gemma3VForCausalLM,
+            supports_ft_quant=False,
+        ),
+        artifact=gemma3v_model.GEMMA3V_ARTIFACT,
     ),
     "gpt2": Model(
         name="gpt2",
@@ -429,6 +468,20 @@ MODELS: Dict[str, Model] = {  # noqa: UP006
             qwen35_model.Qwen35LMHeadModel,
         ),
     ),
+    "qwen3_5_vision": Model(
+        name="qwen3_5_vision",
+        model=qwen35v_model.Qwen35VForCausalLM,
+        config=qwen35v_model.Qwen35VConfig,
+        source={
+            "huggingface-torch": qwen35v_loader.huggingface,
+            "huggingface-safetensor": qwen35v_loader.huggingface,
+        },
+        quantize=make_quantization_functions(
+            qwen35v_model.Qwen35VForCausalLM,
+            supports_ft_quant=False,
+        ),
+        artifact=qwen35v_model.QWEN35V_ARTIFACT,
+    ),
     "qwen3_moe": Model(
         name="qwen3_moe",
         model=qwen3_moe_model.Qwen3MoeForCausalLM,
@@ -554,6 +607,7 @@ MODELS: Dict[str, Model] = {  # noqa: UP006
             supports_awq=True,
             supports_ft_quant=False,
         ),
+        artifact=llava_model.LLAVA_ARTIFACT,
     ),
     "rwkv6": Model(
         name="rwkv6",

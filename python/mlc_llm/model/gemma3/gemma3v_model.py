@@ -3,9 +3,10 @@
 import dataclasses
 from typing import Any, Dict, Optional  # noqa: UP035
 
-from tvm import relax, target, te, tirx
+from tvm import relax, te
 from tvm.relax.frontend import nn
 from tvm.relax.frontend.nn import Tensor, op
+from tvm_tirx import target, tirx
 
 from mlc_llm import op as op_ext
 from mlc_llm.model.vision import ImageProcessor, SigLIPVisionConfig, SigLIPVisionModel
@@ -15,7 +16,12 @@ from mlc_llm.protocol.artifact_manifest import ArtifactDefinition
 from mlc_llm.support import logging
 from mlc_llm.support.config import ConfigBase
 
-from .gemma3_model import Gemma3Config, Gemma3LanguageModel, Gemma3TextConfig
+from .gemma3_model import (
+    Gemma3Config,
+    Gemma3LanguageModel,
+    Gemma3TextConfig,
+    apply_layer_sliding_window,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +91,7 @@ class Gemma3VConfig(ConfigBase):  # pylint: disable=too-many-instance-attributes
             if getattr(self, k) <= 0:
                 if hasattr(self.text_config, k):
                     setattr(self, k, getattr(self.text_config, k))
+        apply_layer_sliding_window(self)
 
 
 # pylint: disable=invalid-name,missing-docstring
@@ -327,10 +334,11 @@ class Gemma3VForCausalLM(nn.Module):  # pylint: disable=too-many-instance-attrib
             num_key_value_heads=self.num_key_value_heads // self.tensor_parallel_shards,
             qk_head_dim=self.head_dim,
             v_head_dim=self.head_dim,
-            rope_mode=RopeMode.NORMAL,
+            rope_mode=RopeMode.NONE,
             rope_scale=1,
             rope_theta=self.rope_theta,
             dtype=self.dtype,
+            layer_sliding_window_size=self.config.text_config.sliding_window_size,
         )
 
     def get_default_spec(self):

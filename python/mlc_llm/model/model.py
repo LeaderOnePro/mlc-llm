@@ -20,13 +20,15 @@ from .eagle import eagle_loader, eagle_model
 from .gemma import gemma_loader, gemma_model
 from .gemma2 import gemma2_loader, gemma2_model
 from .gemma3 import gemma3_loader, gemma3_model, gemma3v_loader, gemma3v_model
-from .gemma4 import gemma4_loader, gemma4_model
+from .gemma4 import gemma4_large_loader, gemma4_large_model, gemma4_loader, gemma4_model
 from .gpt2 import gpt2_loader, gpt2_model
 from .gpt_bigcode import gpt_bigcode_loader, gpt_bigcode_model
 from .gpt_j import gpt_j_loader, gpt_j_model
 from .gpt_neox import gpt_neox_loader, gpt_neox_model
 from .internlm import internlm_loader, internlm_model
 from .internlm2 import internlm2_loader, internlm2_model
+from .lfm2 import lfm2_loader, lfm2_model
+from .lfm3 import lfm3_config, lfm3_loader, lfm3_model
 from .llama import llama_loader, llama_model
 from .llama4 import llama4_loader, llama4_model
 from .llava import llava_loader, llava_model
@@ -50,6 +52,7 @@ from .qwen3_moe import qwen3_moe_loader, qwen3_moe_model
 from .qwen35 import qwen35_loader, qwen35_model, qwen35v_loader, qwen35v_model
 from .rwkv5 import rwkv5_loader, rwkv5_model
 from .rwkv6 import rwkv6_loader, rwkv6_model
+from .smollm3 import smollm3_loader, smollm3_model
 from .stable_lm import stablelm_loader, stablelm_model
 from .starcoder2 import starcoder2_loader, starcoder2_model
 
@@ -245,6 +248,19 @@ MODELS: Dict[str, Model] = {  # noqa: UP006
         },
         quantize=make_quantization_functions(
             gemma3_model.Gemma3ForCausalLM,
+            supports_ft_quant=False,
+        ),
+    ),
+    "gemma4_large_text": Model(
+        name="gemma4_large_text",
+        model=gemma4_large_model.Gemma4LargeForCausalLM,
+        config=gemma4_large_model.Gemma4LargeConfig,
+        source={
+            "huggingface-torch": gemma4_large_loader.huggingface,
+            "huggingface-safetensor": gemma4_large_loader.huggingface,
+        },
+        quantize=make_quantization_functions(
+            gemma4_large_model.Gemma4LargeForCausalLM,
             supports_ft_quant=False,
         ),
     ),
@@ -800,5 +816,40 @@ MODELS: Dict[str, Model] = {  # noqa: UP006
             pooling_strategy="cls",
             normalize=True,
         ),
+    ),
+    "smollm3": Model(
+        name="smollm3",
+        model=smollm3_model.SmolLM3ForCausalLM,
+        config=smollm3_model.SmolLM3Config,
+        source={
+            "huggingface-torch": smollm3_loader.huggingface,
+            "huggingface-safetensor": smollm3_loader.huggingface,
+        },
+        quantize=make_quantization_functions(
+            smollm3_model.SmolLM3ForCausalLM,
+            supports_per_tensor=True,
+        ),
+    ),
+    "lfm2": Model(
+        name="lfm2",
+        model=lfm2_model.Lfm2ForCausalLM,
+        config=lfm2_model.Lfm2Config,
+        source={
+            "huggingface-torch": lfm2_loader.huggingface,
+            "huggingface-safetensor": lfm2_loader.huggingface,
+        },
+        quantize=make_quantization_functions(
+            lfm2_model.Lfm2ForCausalLM,
+        ),
+    ),
+    "lfm3": Model(
+        name="lfm3",
+        model=lfm3_model.Lfm3ForCausalLM,
+        config=lfm3_config.Lfm3Config,
+        source={
+            "huggingface-torch": lfm3_loader.huggingface,
+            "huggingface-safetensor": lfm3_loader.huggingface,
+        },
+        quantize=make_quantization_functions(lfm3_model.Lfm3ForCausalLM),
     ),
 }
